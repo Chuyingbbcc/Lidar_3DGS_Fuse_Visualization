@@ -18,6 +18,7 @@ PACKAGES=(
     libgflags-dev
     libgtest-dev
     libyaml-cpp-dev
+    nlohmann-json3-dev
 )
 
 for package in "${PACKAGES[@]}"; do
