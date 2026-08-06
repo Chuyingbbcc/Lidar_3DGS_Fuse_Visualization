@@ -38,6 +38,37 @@ struct Landmark {
     std::vector<Observation> observations;
 };
 
+struct CameraIntrinsic {
+    Mat3d K = Eigen::Matrix3d::Identity();
+
+    double fx() const {
+        return K(0, 0);
+    }
+
+    double fy() const {
+        return K(1, 1);
+    }
+
+    double cx() const {
+        return K(0, 2);
+    }
+
+    double cy() const {
+        return K(1, 2);
+    }
+};
+
+struct CameraExtrinsic {
+    // Transform a LiDAR point into the camera coordinate system:
+    //
+    // p_C = T_camera_lidar * p_L
+    SE3d T_camera_lidar;
+
+    // Transform a camera point into the LiDAR coordinate system:
+    //
+    // p_L = T_lidar_camera * p_C
+    SE3d T_lidar_camera;
+};
 
 struct Camera{
  int camera_id_;
