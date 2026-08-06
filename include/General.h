@@ -20,13 +20,12 @@ struct Config
     std::string output_path_;
 };
 
-
-
 struct Observation {
     int camera_id;
     int keypoint_idx;
 
     Vec2d pixel;
+    double depth = 0.0;  
 };
 
 struct Landmark {
