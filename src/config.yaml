@@ -1,0 +1,15 @@
+# config.yaml
+
+# Directory containing all input images.
+input_img_dir: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/undistorted"
+
+# Camera extrinsic calibration file.
+camera_extrinsic_path: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/tuned_camera_lidar_extrinsic.json"
+
+# Camera intrinsic calibration file.
+camera_intrinsic_path: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/camera_intrinsic.npz"
+
+# Directory containing projected z-buffer (.npy) files.
+projective_z_buffer_dir: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/lidar_z_buffer_window_merged"
+
+output_path: "./output_optimzied_camera.txt"
