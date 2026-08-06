@@ -1,9 +1,10 @@
-//
-// Created by chuchu on 8/5/26.
-//
 #include "Optimizer.h"
+
 #include <map>
+
 #include <ceres/ceres.h>
+
+#include "DataType.h"
 
 struct BundleAdjustmentOptimizer::ReprojectionError{
     ReprojectionError(const Vec2d& pixel,const Mat3d& K): pixel_(pixel),K_(K){}
@@ -15,12 +16,12 @@ struct BundleAdjustmentOptimizer::ReprojectionError{
         // camera as Sophus SE3 tangent vector (xi)
         //---------------------------------------
         // camera[0:5] : se3 tangent (omega, upsilon)
-        Eigen::Map<const Eigen::Matrix<T,6,1>> xi(camera);
-        Sophus::SE3<T> T_cw = Sophus::SE3<T>::exp(xi);
+        ConstVec6Map<T> xi(camera);
+        SE3<T> T_cw = SE3<T>::exp(xi);
 
         // landmark[0:2] : world point being optimized
-        Eigen::Map<const Eigen::Matrix<T,3,1>> point_w(landmark);
-        Eigen::Matrix<T,3,1> point_c = T_cw * point_w;
+        ConstVec3Map<T> point_w(landmark);
+        Vec3<T> point_c = T_cw * point_w;
 
         //---------------------------------------
         // projection
@@ -46,7 +47,7 @@ private:
 };
 
 struct BundleAdjustmentOptimizer::PosePriorError{
-    PosePriorError(const Sophus::SE3d& prior, double weight): prior_(prior),weight_(weight){}
+    PosePriorError(const SE3d& prior, double weight): prior_(prior),weight_(weight){}
 
     template<typename T>
     bool operator()(const T* const pose, T* residuals) const {
@@ -55,29 +56,29 @@ struct BundleAdjustmentOptimizer::PosePriorError{
         // Convert optimized xi to SE3
         //----------------------------------
 
-        Eigen::Map<const Eigen::Matrix<T,6,1>> xi(pose);
+        ConstVec6Map<T> xi(pose);
 
-        Sophus::SE3<T> current_pose = Sophus::SE3<T>::exp(xi);
+        SE3<T> current_pose = SE3<T>::exp(xi);
 
         //----------------------------------
         // Convert prior SE3d -> SE3<T>
         //----------------------------------
 
-        Sophus::SE3<T> prior_pose = prior_.template cast<T>();
+        SE3<T> prior_pose = prior_.template cast<T>();
 
         //----------------------------------
         // SE3 error
         //----------------------------------
 
-        Sophus::SE3<T> error = prior_pose.inverse() * current_pose;
+        SE3<T> error = prior_pose.inverse() * current_pose;
 
-        Eigen::Matrix<T,6,1> error_vec = error.log();
+        Vec6<T> error_vec = error.log();
 
         //----------------------------------
         // residual
         //----------------------------------
 
-        Eigen::Map<Eigen::Matrix<T,6,1>> residual(residuals);
+        Vec6Map<T> residual(residuals);
 
         residual = T(weight_) * error_vec;
 
@@ -85,7 +86,7 @@ struct BundleAdjustmentOptimizer::PosePriorError{
     }
 
 private:
-    Sophus::SE3d prior_;
+    SE3d prior_;
     double weight_;
 };
 
@@ -94,11 +95,11 @@ struct BundleAdjustmentOptimizer::DepthError{
 
     template<typename T>
     bool operator()(const T* const camera, const T* const landmark, T* residuals) const {
-        Eigen::Map<const Eigen::Matrix<T,6,1>> xi(camera);
-        Sophus::SE3<T> T_cw = Sophus::SE3<T>::exp(xi);
+        ConstVec6Map<T> xi(camera);
+        SE3<T> T_cw = SE3<T>::exp(xi);
 
-        Eigen::Map<const Eigen::Matrix<T,3,1>> point_w(landmark);
-        Eigen::Matrix<T,3,1> point_c = T_cw * point_w;
+        ConstVec3Map<T> point_w(landmark);
+        Vec3<T> point_c = T_cw * point_w;
 
         // Anchors landmark depth to the LiDAR depth-map measurement, removing the
         // scale ambiguity that reprojection error alone leaves unconstrained.
@@ -208,7 +209,7 @@ Status BundleAdjustmentOptimizer::Optimize(){
 
     // write optimized results back into camera_map_ / landmark_map_
     for(const auto& [camera_id, xi] : camera_poses_){
-        camera_map_[camera_id].initial_T_wc_ = Sophus::SE3d::exp(xi);
+        camera_map_[camera_id].initial_T_wc_ = SE3d::exp(xi);
     }
     for(const auto& [landmark_id, pos] : landmark_positions_){
         landmark_map_[landmark_id].optimized_position = pos;
