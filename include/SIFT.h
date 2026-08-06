@@ -8,7 +8,7 @@
 class SIFT{
 public:
 
-    static Status extract_sift( Camera& camera);
+    static Status extract_sift( Camera& camera, Config& config);
 
     static Status exhaust_pair_matching(
         const std::map<int, Camera>& camera_map,

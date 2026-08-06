@@ -18,6 +18,18 @@ struct Config
     std::string camera_intrinsic_path_;
     std::string projective_z_buffer_dir_;
     std::string output_path_;
+
+    // SIFT parameters.
+    int sift_nfeatures_ = 0;
+    int sift_n_octave_layers_ = 3;
+    double sift_contrast_threshold_ = 0.04;
+    double sift_edge_threshold_ = 10.0;
+    double sift_sigma_ = 1.6;
+
+    // Matching.
+    double ratio_threshold_ = 0.75;
+    double ransac_threshold_ = 1.0;
+    int min_inliers_ = 8;
 };
 
 struct Observation {

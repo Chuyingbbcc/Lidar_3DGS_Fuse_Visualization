@@ -28,7 +28,7 @@ Status BundleAdjustment::Run(){
    auto& camera_map = data_loader_.get_camera_map();
    for(auto& it : camera_map){
        Camera& camera=  it.second;
-       status = SIFT::extract_sift(camera);
+       status = SIFT::extract_sift(camera, config_);
        if(!status.success){
          cout<<status.message<<endl;
           return status;
