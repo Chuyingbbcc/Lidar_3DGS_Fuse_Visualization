@@ -23,6 +23,18 @@ Vec2d Project(const SE3d& T_cw, const Vec3d& point_w, const Mat3d& K) {
     return Vec2d(K(0, 0) * x + K(0, 2), K(1, 1) * y + K(1, 2));
 }
 
+Vec6d MakeVec6(
+    double tx,
+    double ty,
+    double tz,
+    double rx,
+    double ry,
+    double rz) {
+    Vec6d value;
+    value << tx, ty, tz, rx, ry, rz;
+    return value;
+}
+
 }  // namespace
 
 TEST(BundleAdjustmentOptimizerTest, RecoversPosesAndLandmarksFromSyntheticData) {
@@ -48,9 +60,9 @@ TEST(BundleAdjustmentOptimizerTest, RecoversPosesAndLandmarksFromSyntheticData) 
     // could never be pulled away from; per-camera perturbations break that symmetry
     // so reprojection data can correct each pose individually.
     std::map<int, SE3d> pose_perturbations;
-    pose_perturbations[0] = SE3d::exp(Vec6d(0.01, -0.01, 0.02, 0.03, -0.02, 0.01));
-    pose_perturbations[1] = SE3d::exp(Vec6d(-0.02, 0.015, -0.01, -0.02, 0.03, -0.015));
-    pose_perturbations[2] = SE3d::exp(Vec6d(0.015, 0.02, -0.02, 0.025, -0.01, 0.02));
+    pose_perturbations[0] = SE3d::exp(MakeVec6(0.01, -0.01, 0.02, 0.03, -0.02, 0.01));
+    pose_perturbations[1] = SE3d::exp(MakeVec6(-0.02, 0.015, -0.01, -0.02, 0.03, -0.015));
+    pose_perturbations[2] = SE3d::exp(MakeVec6(0.015, 0.02, -0.02, 0.025, -0.01, 0.02));
 
     std::map<int, Camera> camera_map;
     for (const auto& [camera_id, T_cw] : gt_poses) {
