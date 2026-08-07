@@ -33,11 +33,6 @@ Status BundleAdjustment::Run(){
          cout<<status.message<<endl;
           return status;
        }
-       status = BaHelper::load_projected_depth(camera);
-       if(!status.success){
-         cout<<status.message<<endl;
-          return status;
-       }
    }
 
    //featrue matching
