@@ -12,7 +12,9 @@ struct Status {
 };
 
 struct Config
-{   Config(const std::string& yaml_path);
+{
+    Config(){};
+    Config(const std::string& yaml_path);
     std::string input_img_dir_;
     std::string camera_extrinsic_path_;
     std::string camera_intrinsic_path_;
@@ -33,20 +35,20 @@ struct Config
 };
 
 struct Observation {
-    int camera_id;
-    int keypoint_idx;
+    int camera_id_;
+    int keypoint_idx_;
 
-    Vec2d pixel;
-    double depth = 0.0;  
+    Vec2d pixel_;
+    double depth_ = 0.0;
 };
 
 struct Landmark {
-    int landmark_id;
+    int landmark_id_;
 
-    Vec3d initial_position;
-    Vec3d optimized_position;
+    Vec3d initial_position_;
+    Vec3d optimized_position_;
 
-    std::vector<Observation> observations;
+    std::vector<Observation> observations_;
 };
 
 struct CameraIntrinsic {
