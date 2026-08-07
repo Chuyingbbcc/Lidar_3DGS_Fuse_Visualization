@@ -13,8 +13,11 @@ Config::Config(const std::string& yaml_path)
     input_img_dir_ = config["input_img_dir"].as<std::string>();
     camera_extrinsic_path_ = config["camera_extrinsic_path"].as<std::string>();
     camera_intrinsic_path_ = config["camera_intrinsic_path"].as<std::string>();
+    camera_timestamp_path_ = config["camera_timestamp_path"].as<std::string>();
     projective_z_buffer_dir_ = config["projective_z_buffer_dir"].as<std::string>();
     output_path_ = config["output_path"].as<std::string>();
+    lidar_ply_dirs_ = config["lidar_ply_dirs"].as<std::string>();
+    lidar_kf_path_ = config["lidar_kf_path"].as<std::string>();
 
     // SIFT
     sift_nfeatures_ =
