@@ -76,20 +76,20 @@ TEST(BundleAdjustmentOptimizerTest, RecoversPosesAndLandmarksFromSyntheticData) 
     std::map<int, Landmark> landmark_map;
     for (const auto& [landmark_id, point_w] : gt_landmarks) {
         Landmark landmark;
-        landmark.landmark_id = landmark_id;
+        landmark.landmark_id_ = landmark_id;
 
         // Rough initial guess (no triangulation/depth modeled here) to seed the solver.
-        landmark.initial_position = point_w + Vec3d(0.1, -0.1, 0.2);
+        landmark.initial_position_ = point_w + Vec3d(0.1, -0.1, 0.2);
 
         for (const auto& [camera_id, T_cw] : gt_poses) {
             Observation obs;
-            obs.camera_id = camera_id;
-            obs.keypoint_idx = landmark_id;
-            obs.pixel = Project(T_cw, point_w, K);
+            obs.camera_id_ = camera_id;
+            obs.keypoint_idx_ = landmark_id;
+            obs.pixel_ = Project(T_cw, point_w, K);
             // Simulates a LiDAR depth-map sample at this pixel: a real, independent
             // metric measurement, not derived from the (perturbed) camera pose.
-            obs.depth = (T_cw * point_w).z();
-            landmark.observations.push_back(obs);
+            obs.depth_ = (T_cw * point_w).z();
+            landmark.observations_.push_back(obs);
         }
 
         landmark_map[landmark_id] = landmark;

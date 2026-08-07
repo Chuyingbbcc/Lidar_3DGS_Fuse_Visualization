@@ -149,38 +149,38 @@ Status BundleAdjustmentOptimizer::Optimize(){
 
     landmark_positions_.clear();
     for(const auto& [landmark_id, landmark] : landmark_map_){
-        landmark_positions_[landmark_id] = landmark.initial_position;
+        landmark_positions_[landmark_id] = landmark.initial_position_;
     }
 
     ceres::Problem problem;
 
     for(auto& [landmark_id, landmark] : landmark_map_){
-        for(const Observation& obs : landmark.observations){
-            auto camera_it = camera_map_.find(obs.camera_id);
+        for(const Observation& obs : landmark.observations_){
+            auto camera_it = camera_map_.find(obs.camera_id_);
             if(camera_it == camera_map_.end()){
                 continue;
             }
 
             ceres::CostFunction* cost_function =
                 new ceres::AutoDiffCostFunction<ReprojectionError, 2, 6, 3>(
-                    new ReprojectionError(obs.pixel, K_));
+                    new ReprojectionError(obs.pixel_, K_));
 
             // Huber loss guards against outlier feature matches dominating the solution
             problem.AddResidualBlock(
                 cost_function,
                 new ceres::HuberLoss(1.0),
-                camera_poses_[obs.camera_id].data(),
+                camera_poses_[obs.camera_id_].data(),
                 landmark_positions_[landmark_id].data());
 
-            if(obs.depth > 0.0){
+            if(obs.depth_ > 0.0){
                 ceres::CostFunction* depth_cost_function =
                     new ceres::AutoDiffCostFunction<DepthError, 1, 6, 3>(
-                        new DepthError(obs.depth, depth_prior_weight_));
+                        new DepthError(obs.depth_, depth_prior_weight_));
 
                 problem.AddResidualBlock(
                     depth_cost_function,
                     new ceres::HuberLoss(1.0),
-                    camera_poses_[obs.camera_id].data(),
+                    camera_poses_[obs.camera_id_].data(),
                     landmark_positions_[landmark_id].data());
             }
         }
@@ -212,7 +212,7 @@ Status BundleAdjustmentOptimizer::Optimize(){
         camera_map_[camera_id].initial_T_wc_ = SE3d::exp(xi);
     }
     for(const auto& [landmark_id, pos] : landmark_positions_){
-        landmark_map_[landmark_id].optimized_position = pos;
+        landmark_map_[landmark_id].optimized_position_ = pos;
     }
 
     return {true, summary.BriefReport()};
@@ -233,7 +233,7 @@ void BundleAdjustmentOptimizer::GetOptimizedLandmarks(
         std::map<int, Vec3d>& optimized_landmarks) const{
     optimized_landmarks.clear();
     for(const auto& [landmark_id, landmark] : landmark_map_){
-        optimized_landmarks[landmark_id] = landmark.optimized_position;
+        optimized_landmarks[landmark_id] = landmark.optimized_position_;
     }
     return;
 }
