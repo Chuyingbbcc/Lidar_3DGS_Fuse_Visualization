@@ -6,7 +6,7 @@
   # -------------------------------------------------------------------
 
   # Directory containing all input images.
-  input_img_dir: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/undistorted"
+  input_img_dir: "/home/chuchu/undistorted"
 
   # Camera extrinsic calibration file.
   camera_extrinsic_path: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/tuned_camera_lidar_extrinsic.json"
