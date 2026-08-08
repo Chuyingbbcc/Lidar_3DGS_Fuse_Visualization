@@ -332,7 +332,6 @@ void DataLoader::read_ply_xyz(const std::string& filename , std::vector<Vec3d>& 
     file.close();
 }
 
-
 void DataLoader::load_keyframe_jsonl(){
     // Load the keyframe JSONL file specified in the configuration
     std::ifstream file(config_.lidar_kf_path_);
@@ -385,5 +384,72 @@ void DataLoader::load_keyframe_jsonl(){
 
     file.close();
     std::cout<< "Finished loading keyframe JSONL. Total keyframes: " << lidar_info_map_.size() << std::endl;
+}
 
+void DataLoader::camera_lidar_association(){
+    //Build (timestamp, lidar_id) table
+    std::vector<std::pair<double, int>> lidar_time_table;
+    lidar_time_table.reserve(lidar_info_map_.size());
+
+    for (const auto& [lidar_id, lidar] : lidar_info_map_){
+        lidar_time_table.emplace_back(lidar.time_stamp_, lidar_id);
+    }
+    // sort the lidar_time_table by timestamp
+    std::sort(lidar_time_table.begin(),lidar_time_table.end(),[](const auto& a, const auto& b){
+            return a.first < b.first;
+        });
+
+    // associate each camera with the closest lidar timestamp
+    for (auto& [camera_id, camera] : camera_map_){
+        double t = camera.time_stamp_;
+        auto it = std::lower_bound(lidar_time_table.begin(),lidar_time_table.end(),t,
+            [](const auto& lhs, double value){
+                return lhs.first < value;
+            });
+            
+        // if the lower bound is the first element, just use it
+        if(it == lidar_time_table.begin()){
+            // nothing to do here, handled below
+            const auto& lidar = lidar_info_map_.at(it->second);
+            camera.matched_lidar_id_ = it->second;
+            camera.initial_T_wc_ = extrinsic_.T_cl * lidar.initial_T_wl_.inverse();
+            continue;
+        }
+        // if the lower bound is the end, use the last element
+       if (it == lidar_time_table.end()){
+            auto last = std::prev(it);
+            const auto& lidar = lidar_info_map_.at(last->second);
+            camera.matched_lidar_id_ = last->second;
+            camera.initial_T_wc_ = extrinsic_.T_cl * lidar.initial_T_wl_.inverse();
+            continue;
+        }
+
+        // Interpolate between two LiDAR poses
+        auto next = it;
+        auto prev = std::prev(it);
+
+        const auto& lidar0 = lidar_info_map_.at(prev->second);
+        const auto& lidar1 =lidar_info_map_.at(next->second);
+        camera.matched_lidar_id_ = prev->second;
+
+        double t0 = prev->first;
+        double t1 = next->first;
+
+        double alpha =(t - t0) / (t1 - t0);
+        alpha = std::clamp(alpha, 0.0, 1.0);
+
+        // Translation interpolation
+        Eigen::Vector3d translation = (1.0 - alpha) * lidar0.initial_T_wl_.translation() +
+            alpha * lidar1.initial_T_wl_.translation();
+
+        // Rotation interpolation (SLERP)
+        Eigen::Quaterniond q0 = lidar0.initial_T_wl_.unit_quaternion();
+        Eigen::Quaterniond q1 = lidar1.initial_T_wl_.unit_quaternion();
+        Eigen::Quaterniond q =q0.slerp(alpha, q1);
+
+        // Interpolated LiDAR pose
+        SE3d T_wl_interp(q, translation);
+        // Convert LiDAR pose -> Camera pose
+        camera.initial_T_wc_ = extrinsic_.T_cl * T_wl_interp.inverse();
+    }
 }

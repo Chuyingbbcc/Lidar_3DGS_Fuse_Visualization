@@ -101,6 +101,7 @@ struct Camera{
  std::string camera_path_;
  double time_stamp_;
  SE3d initial_T_wc_;
+ int matched_lidar_id_ = -1;
  // add depth or descriptor
  cv::Mat depth_map_;
  cv::Mat descriptors_;

@@ -11,6 +11,8 @@ class DataLoader{
 public:
  DataLoader(Config& config): config_(config){
     load_lidar();
+    load_camera();
+    camera_lidar_association();
  };
  Status load();
  std::map<int, Camera>& get_camera_map();
@@ -30,5 +32,6 @@ private:
  Mat4d load_matrix4d(const nlohmann::json& json_matrix);
  void read_ply_xyz(const std::string& filename , std::vector<Vec3d>& points);
  void load_keyframe_jsonl();
+ void camera_lidar_association();
 
 };
