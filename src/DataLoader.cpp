@@ -412,7 +412,7 @@ void DataLoader::camera_lidar_association(){
             // nothing to do here, handled below
             const auto& lidar = lidar_info_map_.at(it->second);
             camera.matched_lidar_id_ = it->second;
-            camera.initial_T_wc_ = extrinsic_.T_cl * lidar.initial_T_wl_.inverse();
+            camera.initial_T_wc_ = extrinsic_.T_camera_lidar * lidar.initial_T_wl_.inverse();
             continue;
         }
         // if the lower bound is the end, use the last element
@@ -420,7 +420,7 @@ void DataLoader::camera_lidar_association(){
             auto last = std::prev(it);
             const auto& lidar = lidar_info_map_.at(last->second);
             camera.matched_lidar_id_ = last->second;
-            camera.initial_T_wc_ = extrinsic_.T_cl * lidar.initial_T_wl_.inverse();
+            camera.initial_T_wc_ = extrinsic_.T_camera_lidar * lidar.initial_T_wl_.inverse();
             continue;
         }
 
@@ -450,6 +450,6 @@ void DataLoader::camera_lidar_association(){
         // Interpolated LiDAR pose
         SE3d T_wl_interp(q, translation);
         // Convert LiDAR pose -> Camera pose
-        camera.initial_T_wc_ = extrinsic_.T_cl * T_wl_interp.inverse();
+        camera.initial_T_wc_ = extrinsic_.T_camera_lidar * T_wl_interp.inverse();
     }
 }
