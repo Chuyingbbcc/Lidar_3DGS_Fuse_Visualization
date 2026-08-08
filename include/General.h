@@ -18,7 +18,11 @@ struct Config
     std::string input_img_dir_;
     std::string camera_extrinsic_path_;
     std::string camera_intrinsic_path_;
+    std::string camera_timestamp_path_;
     std::string projective_z_buffer_dir_;
+    // don't include LIO_results 
+    std::string lidar_ply_dirs_;
+    std::string lidar_kf_path_;
     std::string output_path_;
 
     // SIFT parameters.
@@ -32,6 +36,14 @@ struct Config
     double ratio_threshold_ = 0.75;
     double ransac_threshold_ = 1.0;
     int min_inliers_ = 8;
+};
+
+struct LidarPointCloudInfo {
+    int lidar_id_;
+    std::string lidar_path_;
+    double time_stamp_;
+    // lidar --> world
+    SE3d initial_T_wl_;
 };
 
 struct Observation {
@@ -89,6 +101,7 @@ struct Camera{
  std::string camera_path_;
  double time_stamp_;
  SE3d initial_T_wc_;
+ int matched_lidar_id_ = -1;
  // add depth or descriptor
  cv::Mat depth_map_;
  cv::Mat descriptors_;
