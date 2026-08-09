@@ -15,6 +15,11 @@ public:
     camera_lidar_association();
  };
  Status load();
+ CameraIntrinsic load_intrinsic();
+ CameraExtrinsic load_extrinsic();
+ void load_depth();
+ void load_camera();
+ void load_lidar();
  std::map<int, Camera>& get_camera_map();
  std::map<int, LidarPointCloudInfo>& get_lidar_info_map();
 private:
@@ -23,15 +28,9 @@ private:
  CameraExtrinsic extrinsic_;
  std::map<int, Camera>camera_map_;
  std::map<int, LidarPointCloudInfo>lidar_info_map_;
- CameraIntrinsic load_intrinsic();
- CameraExtrinsic load_extrinsic();
- void load_depth();
- void load_camera();
- void load_lidar();
 //helper
  Mat4d load_matrix4d(const nlohmann::json& json_matrix);
  void read_ply_xyz(const std::string& filename , std::vector<Vec3d>& points);
  void load_keyframe_jsonl();
  void camera_lidar_association();
-
 };
