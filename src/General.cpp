@@ -4,44 +4,129 @@
 #include "General.h"
 
 #include <yaml-cpp/yaml.h>
+#include <iostream>
+#include <filesystem>
+
 
 Config::Config(const std::string& yaml_path)
 {
-    YAML::Node config = YAML::LoadFile(yaml_path);
+    try
+    {
+        YAML::Node config = YAML::LoadFile(yaml_path);
 
-    // Paths
-    input_img_dir_ = config["input_img_dir"].as<std::string>();
-    camera_extrinsic_path_ = config["camera_extrinsic_path"].as<std::string>();
-    camera_intrinsic_path_ = config["camera_intrinsic_path"].as<std::string>();
-    camera_timestamp_path_ = config["camera_timestamp_path"].as<std::string>();
-    projective_z_buffer_dir_ = config["projective_z_buffer_dir"].as<std::string>();
-    output_path_ = config["output_path"].as<std::string>();
-    lidar_ply_dirs_ = config["lidar_ply_dirs"].as<std::string>();
-    lidar_kf_path_ = config["lidar_kf_path"].as<std::string>();
+        auto get_string = [&](const std::string& key)
+        {
+            try
+            {
+                return config[key].as<std::string>();
+            }
+            catch (const YAML::Exception& e)
+            {
+                throw std::runtime_error(
+                    "Failed to load string field '" +
+                    key +
+                    "': " +
+                    e.what());
+            }
+        };
 
-    // SIFT
-    sift_nfeatures_ =
-        config["sift_nfeatures"].as<int>();
+        auto get_int = [&](const std::string& key)
+        {
+            try
+            {
+                return config[key].as<int>();
+            }
+            catch (const YAML::Exception& e)
+            {
+                throw std::runtime_error(
+                    "Failed to load int field '" +
+                    key +
+                    "': " +
+                    e.what());
+            }
+        };
 
-    sift_n_octave_layers_ =
-        config["sift_n_octave_layers"].as<int>();
+        auto get_double = [&](const std::string& key)
+        {
+            try
+            {
+                return config[key].as<double>();
+            }
+            catch (const YAML::Exception& e)
+            {
+                throw std::runtime_error(
+                    "Failed to load double field '" +
+                    key +
+                    "': " +
+                    e.what());
+            }
+        };
 
-    sift_contrast_threshold_ =
-        config["sift_contrast_threshold"].as<double>();
+        // Paths
+        input_img_dir_ =
+            get_string("input_img_dir");
 
-    sift_edge_threshold_ =
-        config["sift_edge_threshold"].as<double>();
+        camera_extrinsic_path_ =
+            get_string("camera_extrinsic_path");
 
-    sift_sigma_ =
-        config["sift_sigma"].as<double>();
+        camera_intrinsic_path_ =
+            get_string("camera_intrinsic_path");
 
-    // Feature matching
-    ratio_threshold_ =
-        config["ratio_threshold"].as<double>();
+        camera_timestamp_path_ =
+            get_string("camera_timestamp_path");
 
-    ransac_threshold_ =
-        config["ransac_threshold"].as<double>();
+        projective_z_buffer_dir_ =
+            get_string("projective_z_buffer_dir");
 
-    min_inliers_ =
-        config["min_inliers"].as<int>();
+        output_path_ =
+            get_string("output_path");
+
+        lidar_ply_dirs_ =
+            get_string("lidar_ply_dirs");
+
+        lidar_kf_path_ =
+            get_string("lidar_kf_path");
+
+        // SIFT
+        sift_nfeatures_ =
+            get_int("sift_nfeatures");
+
+        sift_n_octave_layers_ =
+            get_int("sift_n_octave_layers");
+
+        sift_contrast_threshold_ =
+            get_double("sift_contrast_threshold");
+
+        sift_edge_threshold_ =
+            get_double("sift_edge_threshold");
+
+        sift_sigma_ =
+            get_double("sift_sigma");
+
+        // Feature matching
+        ratio_threshold_ =
+            get_double("ratio_threshold");
+
+        ransac_threshold_ =
+            get_double("ransac_threshold");
+
+        min_inliers_ =
+            get_int("min_inliers");
+
+        num_iteration_ = get_int("num_iteration");
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr
+            << "Failed to load config file: "
+            << yaml_path
+            << std::endl;
+
+        std::cerr
+            << "Reason: "
+            << e.what()
+            << std::endl;
+
+        throw;
+    }
 }

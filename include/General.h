@@ -36,6 +36,8 @@ struct Config
     double ratio_threshold_ = 0.75;
     double ransac_threshold_ = 1.0;
     int min_inliers_ = 8;
+
+    int num_iteration_ =20;
 };
 
 struct LidarPointCloudInfo {
@@ -56,6 +58,7 @@ struct Observation {
 
 struct Landmark {
     int landmark_id_;
+    bool optimized_ =false;
 
     Vec3d initial_position_;
     Vec3d optimized_position_;

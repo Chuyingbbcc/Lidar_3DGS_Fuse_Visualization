@@ -13,9 +13,17 @@ TEST(SIFTTest, ExtractSIFT)
     //----------------------------------------------------------
     // Load config
     //----------------------------------------------------------
-    Config config(
-        "/home/chuchu/Lidar_3DGS_Fuse_Visualization/src/config.yaml"
-    );
+    std::string config_path = std::string(PROJECT_ROOT_DIR)
+    + "/src/config.yaml";
+    std::cout << "Project root: "
+          << PROJECT_ROOT_DIR
+          << std::endl;
+
+    std::cout << "Config path: "
+          << config_path
+          << std::endl;
+   Config config(config_path);
+
 
     //----------------------------------------------------------
     // Build a camera
@@ -78,7 +86,8 @@ TEST(SIFTTest, ExtractSIFT)
     // Save result
     //----------------------------------------------------------
     const std::string output_path =
-        "/home/chuchu/Lidar_3DGS_Fuse_Visualization/output/sift_result.png";
+       std::string(PROJECT_ROOT_DIR)
+    + "/output/sift_result.png";
 
     bool saved = cv::imwrite(
         output_path,

@@ -41,6 +41,11 @@ target_link_libraries(${PROJECT_NAME}_lib
         yaml-cpp
 )
 
+target_compile_definitions(${PROJECT_NAME}_lib
+        PUBLIC
+        PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
 add_executable(${PROJECT_NAME}
         src/main.cpp
 )
