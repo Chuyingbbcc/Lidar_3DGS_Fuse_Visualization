@@ -144,7 +144,7 @@ Status BundleAdjustmentOptimizer::Optimize(){
     // camera_poses_ / landmark_positions_ are keyed by camera_id / landmark_id
     camera_poses_.clear();
     for(const auto& [camera_id, camera] : camera_map_){
-        camera_poses_[camera_id] = camera.initial_T_wc_.log();
+        camera_poses_[camera_id] = camera.initial_T_cw_.log();
     }
 
     landmark_positions_.clear();
@@ -192,7 +192,7 @@ Status BundleAdjustmentOptimizer::Optimize(){
     for(auto& [camera_id, camera] : camera_map_){
         ceres::CostFunction* prior_cost_function =
             new ceres::AutoDiffCostFunction<PosePriorError, 6, 6>(
-                new PosePriorError(camera.initial_T_wc_, pose_prior_weight_));
+                new PosePriorError(camera.initial_T_cw_, pose_prior_weight_));
 
         problem.AddResidualBlock(
             prior_cost_function,
@@ -209,10 +209,12 @@ Status BundleAdjustmentOptimizer::Optimize(){
 
     // write optimized results back into camera_map_ / landmark_map_
     for(const auto& [camera_id, xi] : camera_poses_){
-        camera_map_[camera_id].initial_T_wc_ = SE3d::exp(xi);
+        camera_map_[camera_id].optimized_T_cw_ = SE3d::exp(xi);
+        camera_map_[camera_id].optimized_ = true;
     }
     for(const auto& [landmark_id, pos] : landmark_positions_){
         landmark_map_[landmark_id].optimized_position_ = pos;
+        landmark_map_[landmark_id].optimized_ = true;
     }
 
     return {true, summary.BriefReport()};
@@ -223,7 +225,7 @@ void BundleAdjustmentOptimizer::GetOptimizedPoses(
         std::map<int, SE3d>& optimized_poses) const{
     optimized_poses.clear();
     for(const auto& [camera_id, camera] : camera_map_){
-        optimized_poses[camera_id] = camera.initial_T_wc_;
+        optimized_poses[camera_id] = camera.optimized_T_cw_;
     }
     return;
 }

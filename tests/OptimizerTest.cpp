@@ -69,7 +69,7 @@ TEST(BundleAdjustmentOptimizerTest, RecoversPosesAndLandmarksFromSyntheticData) 
         Camera camera;
         camera.camera_id_ = camera_id;
         camera.camera_name_ = "cam" + std::to_string(camera_id);
-        camera.initial_T_wc_ = pose_perturbations.at(camera_id) * T_cw;
+        camera.initial_T_cw_ = pose_perturbations.at(camera_id) * T_cw;
         camera_map[camera_id] = camera;
     }
 
