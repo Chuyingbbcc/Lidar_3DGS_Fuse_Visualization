@@ -1,91 +1,65 @@
 
+  # config.yaml
 
-# config.yaml
+  # -------------------------------------------------------------------
+  # Input and output paths
+  # -------------------------------------------------------------------
 
+  # Directory containing all input images.
+  input_img_dir: "../data/undistorted"
 
-# -------------------------------------------------------------------
-# Input and output paths
-# -------------------------------------------------------------------
+  # Camera extrinsic calibration file.
+  camera_extrinsic_path: "../data/tuned_camera_lidar_extrinsic.json"
 
+  # Camera intrinsic calibration file.
+  camera_intrinsic_path: "../data/intrinsics.txt"
 
-# Directory containing all input images.
-input_img_dir: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/undistorted"
+  # Camera timetsamp path 
+  camera_timestamp_path: "../data/timestamps.txt"
 
+  # Directory containing projected z-buffer (.npy) files.
+  projective_z_buffer_dir: "../data/lidar_z_buffer_window_merged"
 
-# Camera extrinsic calibration file.
-camera_extrinsic_path: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/tuned_camera_lidar_extrinsic.json"
+  # Output file containing optimized camera poses.
+  output_path: "../data/output_optimized_camera.txt"
 
+  # Directory containing LiDAR point cloud (.ply) files.
+  lidar_ply_dirs: "../data"
 
-# Camera intrinsic calibration file.
-camera_intrinsic_path: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/camera_intrinsic.npz"
-
-
-# Camera timetsamp path
-camera_timestamp_path: "/home/boji/phone_recording/timestamps.txt"
-
-
-# Directory containing projected z-buffer (.npy) files.
-projective_z_buffer_dir: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/lidar_z_buffer_window_merged"
-
-
-# Output file containing optimized camera poses.
-output_path: "./output_optimized_camera.txt"
+  # LiDAR pose file.
+  lidar_kf_path: "../data/key_frames.jsonl"
 
 
-# Directory containing LiDAR point cloud (.ply) files.
-lidar_ply_dirs: "/home/boji/phone_recording"
+  # -------------------------------------------------------------------
+  # SIFT feature extraction
+  # -------------------------------------------------------------------
+
+  # Maximum number of retained features.
+  # Use 0 to let OpenCV retain all detected features.
+  sift_nfeatures: 0
+
+  # Number of layers in each octave.
+  sift_n_octave_layers: 3
+
+  # Larger values keep only stronger features.
+  sift_contrast_threshold: 0.04
+
+  # Larger values retain more edge-like features.
+  sift_edge_threshold: 10.0
+
+  # Gaussian blur sigma at the first octave.
+  sift_sigma: 1.6
 
 
-# LiDAR pose file.
-lidar_kf_path: "/home/boji/phone_recording/key_frames.jsonl"
+  # -------------------------------------------------------------------
+  # Feature matching and geometric verification
+  # -------------------------------------------------------------------
 
+  # Lowe ratio-test threshold.
+  ratio_threshold: 0.75
 
+  # RANSAC pixel threshold used when estimating the fundamental matrix.
+  ransac_threshold: 1.0
 
-
-# -------------------------------------------------------------------
-# SIFT feature extraction
-# -------------------------------------------------------------------
-
-
-# Maximum number of retained features.
-# Use 0 to let OpenCV retain all detected features.
-sift_nfeatures: 0
-
-
-# Number of layers in each octave.
-sift_n_octave_layers: 3
-
-
-# Larger values keep only stronger features.
-sift_contrast_threshold: 0.04
-
-
-# Larger values retain more edge-like features.
-sift_edge_threshold: 10.0
-
-
-# Gaussian blur sigma at the first octave.
-sift_sigma: 1.6
-
-
-
-
-# -------------------------------------------------------------------
-# Feature matching and geometric verification
-# -------------------------------------------------------------------
-
-
-# Lowe ratio-test threshold.
-ratio_threshold: 0.75
-
-
-# RANSAC pixel threshold used when estimating the fundamental matrix.
-ransac_threshold: 1.0
-
-
-# Minimum number of geometrically verified matches required for an image pair.
-min_inliers: 8
-
-
-#optimize
-num_iteration: 20
+  # Minimum number of geometrically verified matches required for an image pair.
+  min_inliers: 8

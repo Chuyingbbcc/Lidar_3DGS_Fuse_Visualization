@@ -2,23 +2,37 @@
 // Created by chuchu on 8/5/26.
 //
 
-#include "DataLoader.h"
+
 #include <string>
 #include <fstream>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
-#include "General.h"
 #include <filesystem>
+#include <unordered_map>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 
+#include "DataLoader.h"
+#include "General.h"
 
 namespace fs = std::filesystem;
  Status DataLoader::load(){
   //fill the camera map
-  intrinsic_ = load_intrinsic();
-  extrinsic_ = load_extrinsic();
+  std::cout << "Loading intrinsic..." << std::endl;
+  load_intrinsic();
+  std::cout << "Loading extrinsic..." << std::endl;
+  load_extrinsic();
+  std::cout << "Loading Lidar..." << std::endl;
+  load_lidar();
+  std::cout << "Loading camera..." << std::endl;
   load_camera();
-  load_depth();
+  // association
+  std::cout << "Associating cameras with lidars..." << std::endl;
+  camera_lidar_association();
+  std::cout << "Loading depth..." << std::endl;
+  update_depth_map_parallel(false);
+
   return {true, "OK"};
 }
 
@@ -31,7 +45,7 @@ std::map<int, LidarPointCloudInfo>& DataLoader::get_lidar_info_map(){
  return lidar_info_map_;
 }
 
-CameraIntrinsic DataLoader::load_intrinsic(){
+void DataLoader::load_intrinsic(){
   std::string intrinsic_path  = config_.camera_intrinsic_path_;
      std::ifstream fin(intrinsic_path);
      if (!fin.is_open()) {
@@ -40,7 +54,7 @@ CameraIntrinsic DataLoader::load_intrinsic(){
      }
 
      std::string line;
-     CameraIntrinsic camera_intrinsic;
+     intrinsic_ = CameraIntrinsic();
      for (int row = 0; row < 3; ++row) {
 
          if (!std::getline(fin, line)) {
@@ -57,7 +71,7 @@ CameraIntrinsic DataLoader::load_intrinsic(){
          std::stringstream ss(line);
 
          for (int col = 0; col < 3; ++col) {
-             if (!(ss >> camera_intrinsic.K(row, col))) {
+             if (!(ss >> intrinsic_.K(row, col))) {
                  throw std::runtime_error(
                      "Failed to parse intrinsic matrix.");
              }
@@ -65,11 +79,10 @@ CameraIntrinsic DataLoader::load_intrinsic(){
      }
 
      std::cout << "Camera intrinsic loaded:\n"
-               << camera_intrinsic.K << std::endl;
-  return camera_intrinsic;
+               << intrinsic_.K << std::endl;
 }
 
-CameraExtrinsic DataLoader::load_extrinsic(){
+void DataLoader::load_extrinsic(){
   std::string extrinsic_path = config_.camera_extrinsic_path_;
      std::ifstream input_file(extrinsic_path);
 
@@ -105,16 +118,16 @@ CameraExtrinsic DataLoader::load_extrinsic(){
      const Vec3d t_CL =
          T_CL_matrix.block<3, 1>(0, 3);
 
-     CameraExtrinsic extrinsic;
-
-     extrinsic.T_camera_lidar =
+     extrinsic_.T_camera_lidar =
          SE3d(R_CL, t_CL);
 
      // Compute the inverse instead of trusting a second stored matrix.
-     extrinsic.T_lidar_camera =
-         extrinsic.T_camera_lidar.inverse();
+     extrinsic_.T_lidar_camera =
+         extrinsic_.T_camera_lidar.inverse();
 
-     return extrinsic;
+    std::cout << "Camera extrinsic loaded:\n"
+              << "T_camera_lidar:\n" << extrinsic_.T_camera_lidar.matrix() << "\n"
+              << "T_lidar_camera:\n" << extrinsic_.T_lidar_camera.matrix() << std::endl;
 }
 
 void DataLoader::load_depth(){
@@ -237,6 +250,9 @@ void DataLoader::load_camera(){
     std::string image_name;
     double timestamp;
     int camera_id = 0;
+    bool image_read = false;
+    int img_width = 0;
+    int img_height = 0;
 
     while (file >> image_name >> timestamp) {
 
@@ -248,7 +264,20 @@ void DataLoader::load_camera(){
        // Full image path
         camera.camera_path_ = camera_img_dir + "/" + image_name;
         // Initial pose will be filled later
-        camera.initial_T_wc_ = SE3d();
+        camera.initial_T_cw_ = SE3d();
+        camera.optimized_T_cw_ = SE3d();
+        camera.optimized_ = false;
+        if(!image_read){
+            // only load once, since image are assumed to have the same dimensions
+            image_read = true;
+            cv::Mat image = cv::imread(camera.camera_path_, cv::IMREAD_COLOR);
+            img_width  = image.cols;
+            img_height = image.rows;
+        }
+        camera.img_width_ = img_width;
+        camera.img_height_ = img_height;
+        // init the depth map
+        camera.depth_map_ = cv::Mat(img_height, img_width, CV_32FC1, cv::Scalar(0));
         camera_map_[camera_id] = camera;
         ++camera_id;
     }
@@ -362,7 +391,6 @@ void DataLoader::load_keyframe_jsonl(){
             info.lidar_id_ = json_line["key_frame_id"].get<int>();
             info.time_stamp_ = json_line["timestamp"].get<double>();
             info.lidar_path_ = config_.lidar_ply_dirs_+ json_line["saved_frame_path"].get<std::string>().erase(0,1);
-            std::cout<<info.lidar_path_<<"\n";
             // get the LIO se3d
             auto t = json_line["lio_pose"]["translation"];
             Eigen::Vector3d translation(
@@ -401,18 +429,19 @@ void DataLoader::camera_lidar_association(){
 
     // associate each camera with the closest lidar timestamp
     for (auto& [camera_id, camera] : camera_map_){
-        double t = camera.time_stamp_;
+        // offset the camera timestamp by 0.4 seconds to account for synchronization delay [TODO: adding in config]
+        double t = camera.time_stamp_ - 0.4;
         auto it = std::lower_bound(lidar_time_table.begin(),lidar_time_table.end(),t,
             [](const auto& lhs, double value){
                 return lhs.first < value;
             });
-            
+        std::cout << "Associating camera ID: " << camera_id << " with timestamp: " << t << std::endl;
         // if the lower bound is the first element, just use it
         if(it == lidar_time_table.begin()){
             // nothing to do here, handled below
             const auto& lidar = lidar_info_map_.at(it->second);
             camera.matched_lidar_id_ = it->second;
-            camera.initial_T_wc_ = extrinsic_.T_camera_lidar * lidar.initial_T_wl_.inverse();
+            camera.initial_T_cw_ = extrinsic_.T_camera_lidar * lidar.initial_T_wl_.inverse();
             continue;
         }
         // if the lower bound is the end, use the last element
@@ -420,7 +449,7 @@ void DataLoader::camera_lidar_association(){
             auto last = std::prev(it);
             const auto& lidar = lidar_info_map_.at(last->second);
             camera.matched_lidar_id_ = last->second;
-            camera.initial_T_wc_ = extrinsic_.T_camera_lidar * lidar.initial_T_wl_.inverse();
+            camera.initial_T_cw_ = extrinsic_.T_camera_lidar * lidar.initial_T_wl_.inverse();
             continue;
         }
 
@@ -450,6 +479,171 @@ void DataLoader::camera_lidar_association(){
         // Interpolated LiDAR pose
         SE3d T_wl_interp(q, translation);
         // Convert LiDAR pose -> Camera pose
-        camera.initial_T_wc_ = extrinsic_.T_camera_lidar * T_wl_interp.inverse();
+        camera.initial_T_cw_ = extrinsic_.T_camera_lidar * T_wl_interp.inverse();
     }
+}
+
+
+void DataLoader::update_depth_map(const bool optimized){
+    // use plus minus 30 lidar frame, 
+    //project the lidar points to each image frame, generate depth map
+    // points under lidar local frame 
+    auto project_lidar_to_camera = [](const std::vector<Vec3d>& points, const SE3d& T_cw,  const SE3d& T_wl, 
+            const Mat3d& K, const int image_width, const int image_height, cv::Mat& depth_map) {
+    
+        const double fx = K(0, 0);
+        const double fy = K(1, 1);
+        const double cx = K(0, 2);
+        const double cy = K(1, 2);
+
+        for (const auto& p_l : points){
+            // lidar ->World -> Camera
+            Vec3d p_c = T_cw * (T_wl * p_l);
+            // Behind camera
+            if (p_c.z() <= 0.0)
+                continue;
+
+            const double inv_z = 1.0 / p_c.z();
+            const int u = static_cast<int>(std::round(fx * p_c.x() * inv_z + cx));
+            const int v = static_cast<int>(std::round(fy * p_c.y() * inv_z + cy));
+
+            if (u < 0 || u >= image_width ||v < 0 || v >= image_height)
+                continue;
+
+            const float depth = static_cast<float>(p_c.z());
+
+            // Keep nearest point (z-buffer)
+            float& current = depth_map.at<float>(v, u);
+            if (current == 0.0f || depth < current)
+                current = depth;
+        }
+    };
+
+    const int window_size = 15;
+    std::unordered_map<int, std::vector<Vec3d>> pointcloud_map;
+    for(auto& [camera_id, camera] : camera_map_){
+        int associated_lidar_id = camera.matched_lidar_id_;
+        if(associated_lidar_id < 0) continue;
+        int lower_bound = std::max(0, associated_lidar_id - window_size);
+        int upper_bound = associated_lidar_id + window_size;
+        std::cout<<"Processing camera ID: " << camera_id << " with associated lidar ID: " << associated_lidar_id << std::endl;
+        for(int lidar_id = lower_bound; lidar_id <= upper_bound; ++lidar_id){
+            if(lidar_info_map_.find(lidar_id) == lidar_info_map_.end()) continue;
+            const auto& lidar = lidar_info_map_.at(lidar_id);
+            if(pointcloud_map.find(lidar_id) == pointcloud_map.end()){
+                read_ply_xyz(lidar_info_map_.at(lidar_id).lidar_path_,pointcloud_map[lidar_id]);
+            }
+            auto& curr_cloud = pointcloud_map[lidar_id];
+            if(camera.depth_map_.empty()){
+                camera.depth_map_ = cv::Mat(camera.img_height_, camera.img_width_, CV_32FC1, cv::Scalar(0));
+            }
+            if(camera.optimized_){
+                project_lidar_to_camera(curr_cloud, camera.optimized_T_cw_, lidar.initial_T_wl_, intrinsic_.K, camera.img_width_, camera.img_height_, camera.depth_map_);
+            }else{
+                project_lidar_to_camera(curr_cloud, camera.initial_T_cw_, lidar.initial_T_wl_, intrinsic_.K, camera.img_width_, camera.img_height_, camera.depth_map_);
+            }
+        }
+    }
+}
+
+
+void DataLoader::update_depth_map_parallel(const bool optimized){
+    const int window_size = 15;
+    // LiDAR -> world -> Camera projection
+    auto project_lidar_to_camera = [](const std::vector<Vec3d>& points, const SE3d& T_cw, const SE3d& T_wl,
+            const Mat3d& K, const int image_width, const int image_height, cv::Mat& depth_map) {
+
+        const double fx = K(0, 0);
+        const double fy = K(1, 1);
+        const double cx = K(0, 2);
+        const double cy = K(1, 2);
+
+        for (const auto& p_l : points){
+            // lidar ->World -> Camera
+            Vec3d p_c = T_cw * (T_wl * p_l);
+            // Behind camera
+            if (p_c.z() <= 0.0)
+                continue;
+
+            const double inv_z = 1.0 / p_c.z();
+            const int u = static_cast<int>(std::round(fx * p_c.x() * inv_z + cx));
+            const int v = static_cast<int>(std::round(fy * p_c.y() * inv_z + cy));
+
+            if (u < 0 || u >= image_width ||v < 0 || v >= image_height)
+                continue;
+
+            const float depth = static_cast<float>(p_c.z());
+
+            // Keep nearest point (z-buffer)
+            float& current = depth_map.at<float>(v, u);
+            if (current == 0.0f || depth < current)
+                current = depth;
+        }
+    };
+
+    // Collect all LiDAR IDs actually needed across all cameras' windows
+    std::vector<int> required_lidar_ids;
+    for(auto& [camera_id, camera] : camera_map_){
+        int associated_lidar_id = camera.matched_lidar_id_;
+        if(associated_lidar_id < 0) continue;
+        int lower_bound = std::max(0, associated_lidar_id - window_size);
+        int upper_bound = associated_lidar_id + window_size;
+        for(int lidar_id = lower_bound; lidar_id <= upper_bound; ++lidar_id){
+            if(lidar_info_map_.find(lidar_id) == lidar_info_map_.end()) continue;
+            required_lidar_ids.push_back(lidar_id);
+        }
+    }
+    std::sort(required_lidar_ids.begin(), required_lidar_ids.end());
+    required_lidar_ids.erase(std::unique(required_lidar_ids.begin(), required_lidar_ids.end()), required_lidar_ids.end());
+
+    // Load LiDAR point clouds in parallel
+    std::unordered_map<int, std::vector<Vec3d>> pointcloud_map;
+    // Pre-allocate entries so parallel threads don't touch the unordered_map's structure concurrently
+    for(const int lidar_id : required_lidar_ids){
+        pointcloud_map.emplace(lidar_id, std::vector<Vec3d>{});
+    }
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, required_lidar_ids.size()), [&](const tbb::blocked_range<size_t>& range){
+        for(size_t i = range.begin(); i != range.end(); ++i){
+            const int lidar_id = required_lidar_ids[i];
+            auto& cloud = pointcloud_map.at(lidar_id);
+            const auto& lidar = lidar_info_map_.at(lidar_id);
+            read_ply_xyz(lidar.lidar_path_, cloud);
+        }
+    });
+
+    // unordered_map cannot be indexed directly, so collect camera IDs for parallel processing
+    std::vector<int> camera_ids;
+    camera_ids.reserve(camera_map_.size());
+    for(const auto& [camera_id, camera] : camera_map_){
+        camera_ids.push_back(camera_id);
+    }
+
+    // Generate depth maps in parallel
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, camera_ids.size()), [&](const tbb::blocked_range<size_t>& range){
+        for(size_t i = range.begin(); i != range.end(); ++i){
+            const int camera_id = camera_ids[i];
+            auto& camera = camera_map_.at(camera_id);
+            const int associated_lidar_id = camera.matched_lidar_id_;
+            if(associated_lidar_id < 0) continue;
+
+            if(camera.depth_map_.empty()){
+                camera.depth_map_ = cv::Mat(camera.img_height_, camera.img_width_, CV_32FC1, cv::Scalar(0));
+            }
+
+            const SE3d& T_cw = optimized ? camera.optimized_T_cw_ : camera.initial_T_cw_;
+
+            const int lower_bound = std::max(0, associated_lidar_id - window_size);
+            const int upper_bound = associated_lidar_id + window_size;
+            for(int lidar_id = lower_bound; lidar_id <= upper_bound; ++lidar_id){
+                auto it = pointcloud_map.find(lidar_id);
+                if(it == pointcloud_map.end()) continue;
+
+                const auto& cloud = it->second;
+                const auto& lidar = lidar_info_map_.at(lidar_id);
+                project_lidar_to_camera(cloud, T_cw, lidar.initial_T_wl_, intrinsic_.K, camera.img_width_, camera.img_height_, camera.depth_map_);
+            }
+        }
+    });
+
+    std::cout<<"Depth map generation completed." << std::endl;
 }
