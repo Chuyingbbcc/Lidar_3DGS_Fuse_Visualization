@@ -64,7 +64,7 @@ struct Landmark {
 
     Vec3d initial_position_;
     Vec3d optimized_position_;
-    bool optimized_ = false;
+
 
     std::vector<Observation> observations_;
 };

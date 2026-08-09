@@ -25,7 +25,7 @@ Status BundleAdjustment::Run(){
    }
    //
    auto& camera_map = data_loader_.get_camera_map();
-   CameraIntrinsic cam_intrinsic = data_loader_.load_intrinsic();
+   CameraIntrinsic cam_intrinsic = data_loader_.get_intrinsic();
    //Sift
    for(auto& it : camera_map){
        Camera& camera=  it.second;
