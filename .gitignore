@@ -1,5 +1,6 @@
 # Never track build output
 build/
 3rd_party/
+data/
 
 
