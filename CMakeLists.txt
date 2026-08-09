@@ -12,6 +12,7 @@ find_package(Eigen3 REQUIRED)
 find_package(GTest REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(TBB REQUIRED)
 
 file(GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
@@ -39,6 +40,7 @@ target_link_libraries(${PROJECT_NAME}_lib
         ${CERES_LIBRARIES}
         Eigen3::Eigen
         yaml-cpp
+        TBB::tbb
 )
 
 add_executable(${PROJECT_NAME}

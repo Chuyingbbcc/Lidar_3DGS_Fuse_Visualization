@@ -6,19 +6,28 @@
   # -------------------------------------------------------------------
 
   # Directory containing all input images.
-  input_img_dir: "/home/chuchu/undistorted"
+  input_img_dir: "../data/undistorted"
 
   # Camera extrinsic calibration file.
-  camera_extrinsic_path: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/tuned_camera_lidar_extrinsic.json"
+  camera_extrinsic_path: "../data/tuned_camera_lidar_extrinsic.json"
 
   # Camera intrinsic calibration file.
-  camera_intrinsic_path: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/camera_intrinsic.npz"
+  camera_intrinsic_path: "../data/intrinsics.txt"
+
+  # Camera timetsamp path 
+  camera_timestamp_path: "../data/timestamps.txt"
 
   # Directory containing projected z-buffer (.npy) files.
-  projective_z_buffer_dir: "/home/chuchu/PycharmProjects/BundleAdjustment/for_chu/lidar_z_buffer_window_merged"
+  projective_z_buffer_dir: "../data/lidar_z_buffer_window_merged"
 
   # Output file containing optimized camera poses.
-  output_path: "./output_optimized_camera.txt"
+  output_path: "../data/output_optimized_camera.txt"
+
+  # Directory containing LiDAR point cloud (.ply) files.
+  lidar_ply_dirs: "../data"
+
+  # LiDAR pose file.
+  lidar_kf_path: "../data/key_frames.jsonl"
 
 
   # -------------------------------------------------------------------

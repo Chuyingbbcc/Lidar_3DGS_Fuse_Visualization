@@ -9,22 +9,20 @@
 
 class DataLoader{
 public:
- DataLoader(Config& config): config_(config){
-    load_lidar();
-    load_camera();
-    camera_lidar_association();
- };
+ DataLoader(Config& config): config_(config){};
  Status load();
  std::map<int, Camera>& get_camera_map();
  std::map<int, LidarPointCloudInfo>& get_lidar_info_map();
+ void update_depth_map(const bool optimized);
+ void update_depth_map_parallel(const bool optimized);
 private:
  Config config_;
  CameraIntrinsic intrinsic_;
  CameraExtrinsic extrinsic_;
  std::map<int, Camera>camera_map_;
  std::map<int, LidarPointCloudInfo>lidar_info_map_;
- CameraIntrinsic load_intrinsic();
- CameraExtrinsic load_extrinsic();
+ void load_intrinsic();
+ void load_extrinsic();
  void load_depth();
  void load_camera();
  void load_lidar();
