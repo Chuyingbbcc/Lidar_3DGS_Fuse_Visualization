@@ -23,9 +23,10 @@ Status BundleAdjustment::Run(){
       cout<<status.message<<endl;
       return status;
    }
-
-   //Sift
+   //
    auto& camera_map = data_loader_.get_camera_map();
+   CameraIntrinsic cam_intrinsic = data_loader_.load_intrinsic();
+   //Sift
    for(auto& it : camera_map){
        Camera& camera=  it.second;
        status = SIFT::extract_sift(camera, config_);
@@ -44,7 +45,8 @@ Status BundleAdjustment::Run(){
     }
 
    //initial the world pos
-   status = BaHelper::extract_initial_landmark_world_pos(camera_map, config_, landmarks);
+
+   status = BaHelper::extract_landmark_world_pos(camera_map, cam_intrinsic, config_, landmarks, true);
    if(!status.success){
          cout<<status.message<<endl;
           return status;
@@ -53,16 +55,21 @@ Status BundleAdjustment::Run(){
    //optimize
    optimizer_.SetCameraMap(camera_map);
    optimizer_.SetLandmarkMap(landmarks);
-   status= optimizer_.Optimize();
-   if(!status.success){
-   cout<<status.message<<endl;
-    return status;
+
+  for(int i=0; i<config_.num_iteration_; i++){
+     status= optimizer_.Optimize();
+      if(!status.success){
+         cout<<status.message<<endl;
+      return status;
+     }
+     //data_loader_.load_depth();
+     status = BaHelper::extract_landmark_world_pos(camera_map, cam_intrinsic, config_, landmarks, false);
    }
 
-   //get optimzied camera pose
+   //get finalized optimzied camera pose
    std::map<int, SE3d>optimzied_poses;
    optimizer_.GetOptimizedPoses(optimzied_poses);
-   //BaHelper::writeOptimziedCamera(, config_.output_path_);
+   //BaHelper::writeOptimziedCamera(, config_.output_path_);*/
 
 }
 
