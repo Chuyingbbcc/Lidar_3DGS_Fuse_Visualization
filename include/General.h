@@ -52,6 +52,8 @@ struct Observation {
 
     Vec2d pixel_;
     double depth_ = 0.0;
+    double optimized_depth_ = 0.0;
+    bool optimized_ = false;
 };
 
 struct Landmark {
@@ -59,6 +61,7 @@ struct Landmark {
 
     Vec3d initial_position_;
     Vec3d optimized_position_;
+    bool optimized_ = false;
 
     std::vector<Observation> observations_;
 };
@@ -94,14 +97,17 @@ struct CameraExtrinsic {
     // p_L = T_lidar_camera * p_C
     SE3d T_lidar_camera;
 };
-
 struct Camera{
  int camera_id_;
  std::string camera_name_;
  std::string camera_path_;
  double time_stamp_;
- SE3d initial_T_wc_;
+ SE3d initial_T_cw_;
+ SE3d optimized_T_cw_;
+ bool optimized_ = false;
  int matched_lidar_id_ = -1;
+ int img_width_;
+ int img_height_;
  // add depth or descriptor
  cv::Mat depth_map_;
  cv::Mat descriptors_;
