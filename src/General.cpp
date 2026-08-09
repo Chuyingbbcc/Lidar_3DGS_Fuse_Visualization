@@ -114,6 +114,14 @@ Config::Config(const std::string& yaml_path)
             get_int("min_inliers");
 
         num_iteration_ = get_int("num_iteration");
+
+        // Optional: fall back to the struct defaults if not present in the yaml.
+        if(config["ceres_max_iterations"]){
+            ceres_max_iterations_ = get_int("ceres_max_iterations");
+        }
+        if(config["ba_cost_threshold"]){
+            ba_cost_threshold_ = get_double("ba_cost_threshold");
+        }
     }
     catch (const std::exception& e)
     {

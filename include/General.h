@@ -38,6 +38,13 @@ struct Config
     int min_inliers_ = 8;
 
     int num_iteration_ =20;
+
+    // Bundle adjustment convergence.
+    // Max iterations for each Ceres solve.
+    int ceres_max_iterations_ = 50;
+    // Outer refinement loop stops early once the relative change in final
+    // cost between iterations drops below this threshold.
+    double ba_cost_threshold_ = 1e-4;
 };
 
 struct LidarPointCloudInfo {

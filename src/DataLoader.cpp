@@ -435,7 +435,6 @@ void DataLoader::camera_lidar_association(){
             [](const auto& lhs, double value){
                 return lhs.first < value;
             });
-        std::cout << "Associating camera ID: " << camera_id << " with timestamp: " << t << std::endl;
         // if the lower bound is the first element, just use it
         if(it == lidar_time_table.begin()){
             // nothing to do here, handled below
@@ -526,7 +525,7 @@ void DataLoader::update_depth_map(const bool optimized){
         if(associated_lidar_id < 0) continue;
         int lower_bound = std::max(0, associated_lidar_id - window_size);
         int upper_bound = associated_lidar_id + window_size;
-        std::cout<<"Processing camera ID: " << camera_id << " with associated lidar ID: " << associated_lidar_id << std::endl;
+        //std::cout<<"Processing camera ID: " << camera_id << " with associated lidar ID: " << associated_lidar_id << std::endl;
         for(int lidar_id = lower_bound; lidar_id <= upper_bound; ++lidar_id){
             if(lidar_info_map_.find(lidar_id) == lidar_info_map_.end()) continue;
             const auto& lidar = lidar_info_map_.at(lidar_id);

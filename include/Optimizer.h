@@ -21,6 +21,10 @@ std::map<int, Vec3d> landmark_positions_;
 double pose_prior_weight_ = 10.0;
 // weight for the DepthError anchoring landmark depth to the LiDAR depth map
 double depth_prior_weight_ = 10.0;
+// max iterations for each Ceres solve
+int max_num_iterations_ = 50;
+// final cost of the most recent Optimize() call
+double last_final_cost_ = 0.0;
 
 public:
     BundleAdjustmentOptimizer() = default;
@@ -37,8 +41,13 @@ public:
 
     void SetDepthPriorWeight(double weight);
 
+    void SetMaxIterations(int max_iterations);
+
+    // Final cost reported by Ceres for the most recent Optimize() call.
+    double GetFinalCost() const;
+
     // Run bundle adjustment
-    Status Optimize();
+    Status Optimize(const bool initialized);
 
     // Optional helper if caller only wants optimized poses
     void GetOptimizedPoses(
@@ -47,6 +56,9 @@ public:
     // Optional helper if caller only wants optimized landmark positions
     void GetOptimizedLandmarks(
         std::map<int, Vec3d>& optimized_landmarks) const;
+    
+    void GetCameraMap(std::map<int, Camera>& camera_map) const;
 
+    void GetLandmarkMap(std::map<int, Landmark>& landmark_map) const;
 
 };

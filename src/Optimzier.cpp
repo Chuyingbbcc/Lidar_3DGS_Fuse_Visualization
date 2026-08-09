@@ -1,10 +1,11 @@
-#include "Optimizer.h"
+
 
 #include <map>
-
 #include <ceres/ceres.h>
 
 #include "DataType.h"
+#include "Optimizer.h"
+
 
 struct BundleAdjustmentOptimizer::ReprojectionError{
     ReprojectionError(const Vec2d& pixel,const Mat3d& K): pixel_(pixel),K_(K){}
@@ -134,9 +135,16 @@ void BundleAdjustmentOptimizer::SetDepthPriorWeight(double weight){
     depth_prior_weight_ = weight;
     return;
 }
+void BundleAdjustmentOptimizer::SetMaxIterations(int max_iterations){
+    max_num_iterations_ = max_iterations;
+    return;
+}
+double BundleAdjustmentOptimizer::GetFinalCost() const{
+    return last_final_cost_;
+}
 
     // Run bundle adjustment
-Status BundleAdjustmentOptimizer::Optimize(){
+Status BundleAdjustmentOptimizer::Optimize(const bool initialized){
     if(camera_map_.empty() || landmark_map_.empty()){
         return {false, "camera_map_ or landmark_map_ is empty"};
     }
@@ -144,12 +152,20 @@ Status BundleAdjustmentOptimizer::Optimize(){
     // camera_poses_ / landmark_positions_ are keyed by camera_id / landmark_id
     camera_poses_.clear();
     for(const auto& [camera_id, camera] : camera_map_){
-        camera_poses_[camera_id] = camera.initial_T_cw_.log();
+        if(initialized){
+            camera_poses_[camera_id] = camera.optimized_T_cw_.log();
+        }else{
+            camera_poses_[camera_id] = camera.initial_T_cw_.log();
+        }
     }
 
     landmark_positions_.clear();
     for(const auto& [landmark_id, landmark] : landmark_map_){
-        landmark_positions_[landmark_id] = landmark.initial_position_;
+        if(initialized){
+            landmark_positions_[landmark_id] = landmark.optimized_position_;
+        }else{
+            landmark_positions_[landmark_id] = landmark.initial_position_;
+        }
     }
 
     ceres::Problem problem;
@@ -172,10 +188,14 @@ Status BundleAdjustmentOptimizer::Optimize(){
                 camera_poses_[obs.camera_id_].data(),
                 landmark_positions_[landmark_id].data());
 
-            if(obs.depth_ > 0.0){
+            double curr_dpeth = obs.depth_;
+            if(initialized){
+                curr_dpeth = obs.optimized_depth_;
+            }
+            if(curr_dpeth > 0.0){
                 ceres::CostFunction* depth_cost_function =
                     new ceres::AutoDiffCostFunction<DepthError, 1, 6, 3>(
-                        new DepthError(obs.depth_, depth_prior_weight_));
+                        new DepthError(curr_dpeth, depth_prior_weight_));
 
                 problem.AddResidualBlock(
                     depth_cost_function,
@@ -190,9 +210,13 @@ Status BundleAdjustmentOptimizer::Optimize(){
     // defined up to a global SE3 transform *and* scale (classic monocular SFM gauge
     // ambiguity); the pose prior keeps every pose near its prior and resolves it.
     for(auto& [camera_id, camera] : camera_map_){
+        auto curr_camera_pose = camera.initial_T_cw_;
+        if(initialized){
+            curr_camera_pose = camera.optimized_T_cw_;
+        }
         ceres::CostFunction* prior_cost_function =
             new ceres::AutoDiffCostFunction<PosePriorError, 6, 6>(
-                new PosePriorError(camera.initial_T_cw_, pose_prior_weight_));
+                new PosePriorError(curr_camera_pose, pose_prior_weight_));
 
         problem.AddResidualBlock(
             prior_cost_function,
@@ -202,10 +226,12 @@ Status BundleAdjustmentOptimizer::Optimize(){
 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
+    options.max_num_iterations = max_num_iterations_;
     options.minimizer_progress_to_stdout = false;
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
+    last_final_cost_ = summary.final_cost;
 
     // write optimized results back into camera_map_ / landmark_map_
     for(const auto& [camera_id, xi] : camera_poses_){
@@ -237,5 +263,15 @@ void BundleAdjustmentOptimizer::GetOptimizedLandmarks(
     for(const auto& [landmark_id, landmark] : landmark_map_){
         optimized_landmarks[landmark_id] = landmark.optimized_position_;
     }
+    return;
+}
+
+void BundleAdjustmentOptimizer::GetCameraMap(std::map<int, Camera>& camera_map) const{
+    camera_map = camera_map_;
+    return;
+}
+
+void BundleAdjustmentOptimizer::GetLandmarkMap(std::map<int, Landmark>& landmark_map) const{
+    landmark_map = landmark_map_;
     return;
 }
