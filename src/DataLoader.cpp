@@ -36,6 +36,13 @@ namespace fs = std::filesystem;
   return {true, "OK"};
 }
 
+void DataLoader::set_camera_map(const std::map<int, Camera>& camera_map){
+    camera_map_ = camera_map;
+}
+
+void DataLoader::set_lidar_info_map(const std::map<int, LidarPointCloudInfo>& lidar_info_map){
+    lidar_info_map_ = lidar_info_map;
+}
 
 std::map<int, Camera>& DataLoader::get_camera_map(){
  return camera_map_;
