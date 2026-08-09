@@ -10,7 +10,8 @@
 
 class BaHelper{
 public:
+static Vec3d  PixelToCamera(const Vec2d& pixel,double depth,const Mat3d& K);
 static Status  load_projected_depth(Camera& camera);
-static Status  extract_initial_landmark_world_pos(std::map<int ,Camera>& camera_map, Config& config,  std::map<int, Landmark>&landmarks );
+static Status  extract_landmark_world_pos(const std::map<int ,Camera>& camera_map, const CameraIntrinsic& intrinsic, const Config& config_, std::map<int, Landmark>&landmarks,  bool is_initial);
 static Status  writeOptimziedCamera(std::map<int ,Camera>& camera_map, Config& config);
 };
