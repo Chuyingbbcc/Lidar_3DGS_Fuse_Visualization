@@ -63,3 +63,6 @@
 
   # Minimum number of geometrically verified matches required for an image pair.
   min_inliers: 8
+
+
+  num_iteration: 20

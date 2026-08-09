@@ -27,8 +27,6 @@ public:
         std::map<int, Landmark>& landmarks);
 
 
-private:
-
     //----------------------------------------------------------
     // Find 2 nearest descriptor matches
     //----------------------------------------------------------
