@@ -43,7 +43,7 @@ TEST(SIFTTest, ExtractSIFT)
 
     camera.camera_id_ = 0;
     camera.camera_name_ = "test";
-    camera.camera_path_ = "/home/chuchu/undistorted/IMG_2644.png";
+    camera.camera_path_ = std::string(PROJECT_ROOT_DIR) + "/data/undistorted/IMG_2644.png";
 
     //----------------------------------------------------------
     // Run SIFT
@@ -118,14 +118,18 @@ TEST(SIFTTest, ExtractSIFT)
         << std::endl;
 
     //----------------------------------------------------------
-    // Optional: display image
+    // Optional: display image (skipped when no display server is
+    // available, e.g. headless CI, since cv::imshow aborts the
+    // process rather than throwing in that case)
     //----------------------------------------------------------
-    cv::imshow(
-        "SIFT Keypoints",
-        visualization
-    );
+    if (std::getenv("DISPLAY") != nullptr) {
+        cv::imshow(
+            "SIFT Keypoints",
+            visualization
+        );
 
-    cv::waitKey(0);
+        cv::waitKey(0);
+    }
 }
 
 

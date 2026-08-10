@@ -8,10 +8,17 @@
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgcodecs.hpp>
 
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
+
+#include <algorithm>
+#include <atomic>
 #include <functional>
+#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <set>
 #include <utility>
 #include <vector>
@@ -65,10 +72,44 @@ Status SIFT::extract_sift(
         camera.keypoints_,
         camera.descriptors_);
 
+    //----------------------------------------------------------
+    // Drop keypoints with no valid LiDAR depth in this frame -
+    // they can never be triangulated/tracked reliably anyway.
+    // //----------------------------------------------------------
+    // if (!camera.depth_map_.empty())
+    // {
+    //     std::vector<cv::KeyPoint> valid_keypoints;
+    //     cv::Mat valid_descriptors;
+    //     valid_keypoints.reserve(camera.keypoints_.size());
+
+    //     for (size_t i = 0; i < camera.keypoints_.size(); ++i)
+    //     {
+    //         int u = cvRound(camera.keypoints_[i].pt.x);
+    //         int v = cvRound(camera.keypoints_[i].pt.y);
+
+    //         if (u < 0 || u >= camera.depth_map_.cols ||
+    //             v < 0 || v >= camera.depth_map_.rows)
+    //         {
+    //             continue;
+    //         }
+
+    //         if (camera.depth_map_.at<float>(v, u) <= 0.0f)
+    //         {
+    //             continue;
+    //         }
+
+    //         valid_keypoints.push_back(camera.keypoints_[i]);
+    //         valid_descriptors.push_back(camera.descriptors_.row(static_cast<int>(i)));
+    //     }
+
+    //     camera.keypoints_ = std::move(valid_keypoints);
+    //     camera.descriptors_ = valid_descriptors;
+    // }
+
     if (camera.keypoints_.empty())
     {
         return {
-            false,
+            true,
             "No SIFT features detected in image: "
                 + camera.camera_name_
         };
@@ -124,7 +165,8 @@ void SIFT::knn_matching(
 void SIFT::lowe_ratio_test(
     const std::vector<std::vector<cv::DMatch>>& knn_matches,
     std::vector<cv::DMatch>& ratio_matches,
-    float ratio_threshold)
+    float ratio_threshold,
+    float max_match_distance)
 {
     ratio_matches.clear();
 
@@ -140,6 +182,15 @@ void SIFT::lowe_ratio_test(
 
         const cv::DMatch& best = matches[0];
         const cv::DMatch& second = matches[1];
+
+        //------------------------------------------------------
+        // Absolute distance cap, in addition to the ratio test.
+        //------------------------------------------------------
+        if (max_match_distance >= 0.0f &&
+            best.distance > max_match_distance)
+        {
+            continue;
+        }
 
         //------------------------------------------------------
         // Lowe ratio test
@@ -539,6 +590,296 @@ void SIFT::extract_landmark_map(
 
 
 // ============================================================
+// Save / load landmark cache
+//
+// Binary format so a rerun can resume without redoing the
+// expensive exhaustive matching:
+//
+// [int64 landmark_count]
+// per landmark:
+//   [int landmark_id_][char optimized_]
+//   [double x3 initial_position_][double x3 optimized_position_]
+//   [int64 observation_count]
+//   per observation:
+//     [int camera_id_][int keypoint_idx_]
+//     [double x2 pixel_][double depth_][double optimized_depth_]
+//     [char optimized_]
+// ============================================================
+
+Status SIFT::save_landmarks(
+    const std::string& file_path,
+    const std::map<int, Landmark>& landmarks)
+{
+    std::ofstream out(file_path, std::ios::binary);
+
+    if (!out.is_open())
+    {
+        return {
+            false,
+            "Failed to open landmark cache for writing: " + file_path
+        };
+    }
+
+    const int64_t landmark_count =
+        static_cast<int64_t>(landmarks.size());
+
+    out.write(
+        reinterpret_cast<const char*>(&landmark_count),
+        sizeof(landmark_count));
+
+    for (const auto& [landmark_id, landmark] : landmarks)
+    {
+        out.write(
+            reinterpret_cast<const char*>(&landmark.landmark_id_),
+            sizeof(landmark.landmark_id_));
+
+        const char optimized = landmark.optimized_ ? 1 : 0;
+        out.write(&optimized, sizeof(optimized));
+
+        out.write(
+            reinterpret_cast<const char*>(landmark.initial_position_.data()),
+            sizeof(double) * 3);
+
+        out.write(
+            reinterpret_cast<const char*>(landmark.optimized_position_.data()),
+            sizeof(double) * 3);
+
+        const int64_t observation_count =
+            static_cast<int64_t>(landmark.observations_.size());
+
+        out.write(
+            reinterpret_cast<const char*>(&observation_count),
+            sizeof(observation_count));
+
+        for (const Observation& observation : landmark.observations_)
+        {
+            out.write(
+                reinterpret_cast<const char*>(&observation.camera_id_),
+                sizeof(observation.camera_id_));
+
+            out.write(
+                reinterpret_cast<const char*>(&observation.keypoint_idx_),
+                sizeof(observation.keypoint_idx_));
+
+            out.write(
+                reinterpret_cast<const char*>(observation.pixel_.data()),
+                sizeof(double) * 2);
+
+            out.write(
+                reinterpret_cast<const char*>(&observation.depth_),
+                sizeof(observation.depth_));
+
+            out.write(
+                reinterpret_cast<const char*>(&observation.optimized_depth_),
+                sizeof(observation.optimized_depth_));
+
+            const char obs_optimized = observation.optimized_ ? 1 : 0;
+            out.write(&obs_optimized, sizeof(obs_optimized));
+        }
+    }
+
+    if (!out)
+    {
+        return {
+            false,
+            "Failed while writing landmark cache: " + file_path
+        };
+    }
+
+    return {
+        true,
+        "Saved " + std::to_string(landmarks.size())
+            + " landmarks to " + file_path
+    };
+}
+
+Status SIFT::load_landmarks(
+    const std::string& file_path,
+    std::map<int, Landmark>& landmarks)
+{
+    landmarks.clear();
+
+    std::ifstream in(file_path, std::ios::binary);
+
+    if (!in.is_open())
+    {
+        return {
+            false,
+            "Failed to open landmark cache for reading: " + file_path
+        };
+    }
+
+    int64_t landmark_count = 0;
+
+    in.read(
+        reinterpret_cast<char*>(&landmark_count),
+        sizeof(landmark_count));
+
+    for (int64_t i = 0; i < landmark_count && in; ++i)
+    {
+        Landmark landmark;
+
+        in.read(
+            reinterpret_cast<char*>(&landmark.landmark_id_),
+            sizeof(landmark.landmark_id_));
+
+        char optimized = 0;
+        in.read(&optimized, sizeof(optimized));
+        landmark.optimized_ = (optimized != 0);
+
+        in.read(
+            reinterpret_cast<char*>(landmark.initial_position_.data()),
+            sizeof(double) * 3);
+
+        in.read(
+            reinterpret_cast<char*>(landmark.optimized_position_.data()),
+            sizeof(double) * 3);
+
+        int64_t observation_count = 0;
+
+        in.read(
+            reinterpret_cast<char*>(&observation_count),
+            sizeof(observation_count));
+
+        landmark.observations_.reserve(observation_count);
+
+        for (int64_t j = 0; j < observation_count && in; ++j)
+        {
+            Observation observation;
+
+            in.read(
+                reinterpret_cast<char*>(&observation.camera_id_),
+                sizeof(observation.camera_id_));
+
+            in.read(
+                reinterpret_cast<char*>(&observation.keypoint_idx_),
+                sizeof(observation.keypoint_idx_));
+
+            in.read(
+                reinterpret_cast<char*>(observation.pixel_.data()),
+                sizeof(double) * 2);
+
+            in.read(
+                reinterpret_cast<char*>(&observation.depth_),
+                sizeof(observation.depth_));
+
+            in.read(
+                reinterpret_cast<char*>(&observation.optimized_depth_),
+                sizeof(observation.optimized_depth_));
+
+            char obs_optimized = 0;
+            in.read(&obs_optimized, sizeof(obs_optimized));
+            observation.optimized_ = (obs_optimized != 0);
+
+            landmark.observations_.push_back(observation);
+        }
+
+        landmarks.emplace(landmark.landmark_id_, std::move(landmark));
+    }
+
+    if (!in && !in.eof())
+    {
+        landmarks.clear();
+        return {
+            false,
+            "Failed while reading landmark cache: " + file_path
+        };
+    }
+
+    return {
+        true,
+        "Loaded " + std::to_string(landmarks.size())
+            + " landmarks from " + file_path
+    };
+}
+
+
+// ============================================================
+// Match + verify a single camera pair
+// ============================================================
+
+void SIFT::match_pair(
+    int camera_id_1,
+    const Camera& camera_1,
+    int camera_id_2,
+    const Camera& camera_2,
+    float ratio_threshold,
+    double ransac_threshold,
+    int min_inliers,
+    std::vector<cv::DMatch>& verified_matches,
+    std::vector<uchar>& inlier_mask,
+    float max_match_distance)
+{
+    verified_matches.clear();
+    inlier_mask.clear();
+
+    // =================================================
+    // 1. KNN descriptor matching
+    // =================================================
+
+    std::vector<std::vector<cv::DMatch>> knn_matches;
+
+    knn_matching(
+        camera_1.descriptors_,
+        camera_2.descriptors_,
+        knn_matches);
+
+
+    // =================================================
+    // 2. Lowe ratio test
+    // =================================================
+
+    std::vector<cv::DMatch> ratio_matches;
+
+    lowe_ratio_test(
+        knn_matches,
+        ratio_matches,
+        ratio_threshold,
+        max_match_distance);
+
+    if (static_cast<int>(ratio_matches.size()) < min_inliers)
+    {
+        return;
+    }
+
+
+    // =================================================
+    // 3. Convert matches to pixels
+    // =================================================
+
+    std::vector<cv::Point2f> points_1;
+    std::vector<cv::Point2f> points_2;
+
+    match_to_pixels(
+        ratio_matches,
+        camera_1,
+        camera_2,
+        points_1,
+        points_2);
+
+
+    // =================================================
+    // 4. Fundamental matrix + RANSAC
+    // =================================================
+
+    const int num_inliers =
+        geometric_verification(
+            points_1,
+            points_2,
+            ransac_threshold,
+            inlier_mask);
+
+    if (num_inliers < min_inliers)
+    {
+        inlier_mask.clear();
+        return;
+    }
+
+    verified_matches = std::move(ratio_matches);
+}
+
+
+// ============================================================
 // Exhaustive pair matching
 // ============================================================
 
@@ -558,6 +899,9 @@ Status SIFT::exhaust_pair_matching(
 
     const int min_inliers =
         config.min_inliers_;
+
+    const float max_match_distance =
+        static_cast<float>(config.sift_max_match_distance_);
 
 
     landmarks.clear();
@@ -651,7 +995,8 @@ Status SIFT::exhaust_pair_matching(
             lowe_ratio_test(
                 knn_matches,
                 ratio_matches,
-                ratio_threshold);
+                ratio_threshold,
+                max_match_distance);
 
 
             if (static_cast<int>(
@@ -727,6 +1072,190 @@ Status SIFT::exhaust_pair_matching(
                 << num_inliers
                 << std::endl;
         }
+    }
+
+
+    //----------------------------------------------------------
+    // Convert tracks to landmark map
+    //----------------------------------------------------------
+    extract_landmark_map(
+        parent,
+        camera_map,
+        landmarks);
+
+
+    //----------------------------------------------------------
+    // Summary
+    //----------------------------------------------------------
+    std::cout
+        << "Generated "
+        << landmarks.size()
+        << " landmark tracks."
+        << std::endl;
+
+
+    return {
+        true,
+        "Feature matching done! Generated "
+            + std::to_string(landmarks.size())
+            + " landmarks."
+    };
+}
+
+
+// ============================================================
+// Exhaustive pair matching (parallelized over camera pairs)
+// ============================================================
+
+Status SIFT::exhaust_pair_matching_parallel(
+    const std::map<int, Camera>& camera_map,
+    Config& config,
+    std::map<int, Landmark>& landmarks)
+{
+    //----------------------------------------------------------
+    // Config
+    //----------------------------------------------------------
+    const float ratio_threshold =
+        config.ratio_threshold_;
+
+    const double ransac_threshold =
+        config.ransac_threshold_;
+
+    const int min_inliers =
+        config.min_inliers_;
+
+    const float max_match_distance =
+        static_cast<float>(config.sift_max_match_distance_);
+
+
+    landmarks.clear();
+
+
+    //----------------------------------------------------------
+    // Flatten cameras with descriptors so pairs can be indexed
+    // for tbb::parallel_for.
+    //----------------------------------------------------------
+    std::vector<std::pair<int, const Camera*>> cameras;
+    cameras.reserve(camera_map.size());
+
+    for (const auto& [camera_id, camera] : camera_map)
+    {
+        if (!camera.descriptors_.empty())
+        {
+            cameras.emplace_back(camera_id, &camera);
+        }
+    }
+
+    //----------------------------------------------------------
+    // Enumerate all (i, j) pairs, i < j, up front so each pair
+    // maps to a unique slot -> no data races when writing results.
+    //----------------------------------------------------------
+    std::vector<std::pair<size_t, size_t>> pair_indices;
+    pair_indices.reserve(cameras.size() * (cameras.size() - 1) / 2);
+
+    for (size_t i = 0; i < cameras.size(); ++i)
+    {
+        for (size_t j = i + 1; j < cameras.size(); ++j)
+        {
+            pair_indices.emplace_back(i, j);
+        }
+    }
+
+    struct PairResult
+    {
+        std::vector<cv::DMatch> verified_matches;
+        std::vector<uchar> inlier_mask;
+    };
+
+    std::vector<PairResult> pair_results(pair_indices.size());
+
+    const size_t total_pairs = pair_indices.size();
+    std::cout
+        << "[exhaust_pair_matching_parallel] Matching "
+        << total_pairs
+        << " camera pairs across "
+        << cameras.size()
+        << " cameras..."
+        << std::endl;
+
+    std::atomic<size_t> completed_pairs{0};
+    std::mutex progress_mutex;
+    // Print roughly every 5% so progress is visible without flooding stdout.
+    const size_t print_interval =
+        std::max<size_t>(1, total_pairs / 20);
+
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, pair_indices.size()),
+        [&](const tbb::blocked_range<size_t>& range)
+        {
+            for (size_t k = range.begin(); k != range.end(); ++k)
+            {
+                const auto [i, j] = pair_indices[k];
+
+                match_pair(
+                    cameras[i].first,
+                    *cameras[i].second,
+                    cameras[j].first,
+                    *cameras[j].second,
+                    ratio_threshold,
+                    ransac_threshold,
+                    min_inliers,
+                    pair_results[k].verified_matches,
+                    pair_results[k].inlier_mask,
+                    max_match_distance);
+
+                const size_t done = ++completed_pairs;
+                if (done % print_interval == 0 || done == total_pairs)
+                {
+                    std::lock_guard<std::mutex> lock(progress_mutex);
+                    std::cout
+                        << "[exhaust_pair_matching_parallel] "
+                        << done << " / " << total_pairs
+                        << " pairs matched ("
+                        << (100.0 * done / total_pairs)
+                        << "%)"
+                        << std::endl;
+                }
+            }
+        });
+
+
+    //----------------------------------------------------------
+    // Union-Find must live across ALL image pairs, merged
+    // sequentially since it isn't thread-safe.
+    //----------------------------------------------------------
+    std::map<FeatureNode, FeatureNode> parent;
+
+    for (size_t k = 0; k < pair_indices.size(); ++k)
+    {
+        const auto& result = pair_results[k];
+
+        if (result.verified_matches.empty())
+        {
+            continue;
+        }
+
+        const auto [i, j] = pair_indices[k];
+        const int camera_id_1 = cameras[i].first;
+        const int camera_id_2 = cameras[j].first;
+
+        union_matches(
+            camera_id_1,
+            camera_id_2,
+            result.verified_matches,
+            result.inlier_mask,
+            parent);
+
+        std::cout
+            << "Camera "
+            << camera_id_1
+            << " <-> "
+            << camera_id_2
+            << " | ratio matches: "
+            << result.verified_matches.size()
+            << " | inliers: "
+            << std::count(result.inlier_mask.begin(), result.inlier_mask.end(), 1)
+            << std::endl;
     }
 
 
