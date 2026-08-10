@@ -1,6 +1,10 @@
 
 
 #include <map>
+#include <iostream>
+#include <vector>
+#include <algorithm>
+#include <cmath>
 #include <ceres/ceres.h>
 
 #include "DataType.h"
@@ -152,7 +156,7 @@ Status BundleAdjustmentOptimizer::Optimize(const bool initialized){
     // camera_poses_ / landmark_positions_ are keyed by camera_id / landmark_id
     camera_poses_.clear();
     for(const auto& [camera_id, camera] : camera_map_){
-        if(initialized){
+        if(!initialized){
             camera_poses_[camera_id] = camera.optimized_T_cw_.log();
         }else{
             camera_poses_[camera_id] = camera.initial_T_cw_.log();
@@ -161,7 +165,7 @@ Status BundleAdjustmentOptimizer::Optimize(const bool initialized){
 
     landmark_positions_.clear();
     for(const auto& [landmark_id, landmark] : landmark_map_){
-        if(initialized){
+        if(!initialized){
             landmark_positions_[landmark_id] = landmark.optimized_position_;
         }else{
             landmark_positions_[landmark_id] = landmark.initial_position_;
@@ -169,6 +173,12 @@ Status BundleAdjustmentOptimizer::Optimize(const bool initialized){
     }
 
     ceres::Problem problem;
+
+    // Track residual blocks by cost type so we can report which one
+    // dominates the total cost, since they're otherwise summed together.
+    std::vector<ceres::ResidualBlockId> reprojection_blocks;
+    std::vector<ceres::ResidualBlockId> depth_blocks;
+    std::vector<ceres::ResidualBlockId> pose_prior_blocks;
 
     for(auto& [landmark_id, landmark] : landmark_map_){
         for(const Observation& obs : landmark.observations_){
@@ -182,14 +192,14 @@ Status BundleAdjustmentOptimizer::Optimize(const bool initialized){
                     new ReprojectionError(obs.pixel_, K_));
 
             // Huber loss guards against outlier feature matches dominating the solution
-            problem.AddResidualBlock(
+            reprojection_blocks.push_back(problem.AddResidualBlock(
                 cost_function,
                 new ceres::HuberLoss(1.0),
                 camera_poses_[obs.camera_id_].data(),
-                landmark_positions_[landmark_id].data());
+                landmark_positions_[landmark_id].data()));
 
             double curr_dpeth = obs.depth_;
-            if(initialized){
+            if(!initialized){
                 curr_dpeth = obs.optimized_depth_;
             }
             if(curr_dpeth > 0.0){
@@ -197,11 +207,11 @@ Status BundleAdjustmentOptimizer::Optimize(const bool initialized){
                     new ceres::AutoDiffCostFunction<DepthError, 1, 6, 3>(
                         new DepthError(curr_dpeth, depth_prior_weight_));
 
-                problem.AddResidualBlock(
+                depth_blocks.push_back(problem.AddResidualBlock(
                     depth_cost_function,
                     new ceres::HuberLoss(1.0),
                     camera_poses_[obs.camera_id_].data(),
-                    landmark_positions_[landmark_id].data());
+                    landmark_positions_[landmark_id].data()));
             }
         }
     }
@@ -211,27 +221,71 @@ Status BundleAdjustmentOptimizer::Optimize(const bool initialized){
     // ambiguity); the pose prior keeps every pose near its prior and resolves it.
     for(auto& [camera_id, camera] : camera_map_){
         auto curr_camera_pose = camera.initial_T_cw_;
-        if(initialized){
+        if(!initialized){
             curr_camera_pose = camera.optimized_T_cw_;
         }
         ceres::CostFunction* prior_cost_function =
             new ceres::AutoDiffCostFunction<PosePriorError, 6, 6>(
                 new PosePriorError(curr_camera_pose, pose_prior_weight_));
 
-        problem.AddResidualBlock(
+        pose_prior_blocks.push_back(problem.AddResidualBlock(
             prior_cost_function,
             nullptr,
-            camera_poses_[camera_id].data());
+            camera_poses_[camera_id].data()));
     }
+
+    // Sums 0.5 * sum(residual^2) over just this group of blocks, matching
+    // ceres::Solver::Summary's cost convention.
+    auto evaluate_group_cost = [&problem](const std::vector<ceres::ResidualBlockId>& blocks) -> double {
+        if(blocks.empty()){
+            return 0.0;
+        }
+        ceres::Problem::EvaluateOptions eval_options;
+        eval_options.residual_blocks = blocks;
+        double cost = 0.0;
+        problem.Evaluate(eval_options, &cost, nullptr, nullptr, nullptr);
+        return cost;
+    };
+
+    const double initial_reprojection_cost = evaluate_group_cost(reprojection_blocks);
+    const double initial_depth_cost = evaluate_group_cost(depth_blocks);
+    const double initial_pose_prior_cost = evaluate_group_cost(pose_prior_blocks);
 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.max_num_iterations = max_num_iterations_;
-    options.minimizer_progress_to_stdout = false;
+    // Print Ceres's own per-iteration cost report (cost, cost change, trust
+    // region radius, etc.) to stdout as it solves.
+    options.minimizer_progress_to_stdout = true;
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
     last_final_cost_ = summary.final_cost;
+
+    // Ceres already tracks initial/final cost for this single Solve() call,
+    // so report the change here instead of relying on the caller to diff
+    // GetFinalCost() across outer-loop iterations.
+    const double solve_relative_change =
+        std::abs(summary.initial_cost - summary.final_cost) /
+        std::max(summary.initial_cost, 1e-12);
+
+    std::cout
+        << "[Optimizer] initial cost: " << summary.initial_cost
+        << " -> final cost: " << summary.final_cost
+        << " (relative change: " << solve_relative_change
+        << ", iterations: " << summary.num_successful_steps + summary.num_unsuccessful_steps
+        << ")" << std::endl;
+
+    const double final_reprojection_cost = evaluate_group_cost(reprojection_blocks);
+    const double final_depth_cost = evaluate_group_cost(depth_blocks);
+    const double final_pose_prior_cost = evaluate_group_cost(pose_prior_blocks);
+
+    std::cout
+        << "[Optimizer] cost breakdown (reprojection / depth prior / pose prior): "
+        << initial_reprojection_cost << " -> " << final_reprojection_cost << "  |  "
+        << initial_depth_cost << " -> " << final_depth_cost << "  |  "
+        << initial_pose_prior_cost << " -> " << final_pose_prior_cost
+        << std::endl;
 
     // write optimized results back into camera_map_ / landmark_map_
     for(const auto& [camera_id, xi] : camera_poses_){
@@ -242,6 +296,61 @@ Status BundleAdjustmentOptimizer::Optimize(const bool initialized){
         landmark_map_[landmark_id].optimized_position_ = pos;
         landmark_map_[landmark_id].optimized_ = true;
     }
+
+    // Report the actual pixel-space reprojection error (project each
+    // optimized landmark into each observing camera and compare against the
+    // observed pixel). This is the direct geometric error, distinct from the
+    // weighted/Huberized Ceres cost above.
+    // {
+    //     double sum_sq_error = 0.0;
+    //     double max_error = 0.0;
+    //     int count = 0;
+    //     int behind_camera = 0;
+
+    //     for(const auto& [landmark_id, landmark] : landmark_map_){
+    //         for(const auto& obs : landmark.observations_){
+    //             auto camera_it = camera_map_.find(obs.camera_id_);
+    //             if(camera_it == camera_map_.end()){
+    //                 continue;
+    //             }
+
+    //             const Vec3d point_c =
+    //                 camera_it->second.optimized_T_cw_ * landmark.optimized_position_;
+
+    //             if(point_c.z() <= 0.0){
+    //                 ++behind_camera;
+    //                 continue;
+    //             }
+
+    //             const double u = K_(0, 0) * point_c.x() / point_c.z() + K_(0, 2);
+    //             const double v = K_(1, 1) * point_c.y() / point_c.z() + K_(1, 2);
+    //             const double du = u - obs.pixel_.x();
+    //             const double dv = v - obs.pixel_.y();
+    //             const double error = std::sqrt(du * du + dv * dv);
+    //             // std::cout<<landmark.optimized_position_ << std::endl;
+    //             // std::cout << "point_c: " << point_c.transpose() << std::endl;
+    //             // std::cout<< K_ << std::endl;
+    //             // std::cout << "[Optimizer] reprojection error for landmark " << landmark_id
+    //             //           << " in camera " << obs.camera_id_ << ": " <<"u: " << u << ", v: " << v << ", error: " << error << ", observed u: " << obs.pixel_.x() << ", observed v : " << obs.pixel_.y() << std::endl;
+
+    //             sum_sq_error += error * error;
+    //             max_error = std::max(max_error, error);
+    //             ++count;
+    //         }
+    //     }
+
+    //     if(count > 0){
+    //         const double rmse = std::sqrt(sum_sq_error / count);
+    //         std::cout
+    //             << "[Optimizer] pixel reprojection error - RMSE: " << rmse
+    //             << " px, max: " << max_error << " px, over " << count
+    //             << " observations";
+    //         if(behind_camera > 0){
+    //             std::cout << " (" << behind_camera << " observations skipped: behind camera)";
+    //         }
+    //         std::cout << std::endl;
+    //     }
+    // }
 
     return {true, summary.BriefReport()};
 }
