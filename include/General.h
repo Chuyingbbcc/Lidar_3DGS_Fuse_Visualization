@@ -25,6 +25,10 @@ struct Config
     std::string lidar_kf_path_;
     std::string output_path_;
 
+    // Cache file for SIFT::exhaust_pair_matching() results, so a rerun can
+    // resume from disk instead of redoing exhaustive feature matching.
+    std::string landmark_cache_path_ = "../data/landmarks_cache.bin";
+
     // SIFT parameters.
     int sift_nfeatures_ = 0;
     int sift_n_octave_layers_ = 3;
@@ -36,8 +40,15 @@ struct Config
     double ratio_threshold_ = 0.75;
     double ransac_threshold_ = 1.0;
     int min_inliers_ = 8;
+    // Absolute cap on descriptor L2 distance for a match, applied alongside
+    // the Lowe ratio test. Use -1 to disable (no absolute cap).
+    double sift_max_match_distance_ = -1.0;
 
     int num_iteration_ =20;
+
+    // Maximum number of images to load from camera_timestamp_path_.
+    // Use -1 (default) to load all images.
+    int max_images_ = -1;
 
     // Bundle adjustment convergence.
     // Max iterations for each Ceres solve.
@@ -45,6 +56,11 @@ struct Config
     // Outer refinement loop stops early once the relative change in final
     // cost between iterations drops below this threshold.
     double ba_cost_threshold_ = 1e-4;
+
+    // Landmark filtering: after triangulating a landmark's world position,
+    // observations whose reprojection error exceeds this many pixels are
+    // dropped (and the landmark itself is dropped if too few remain).
+    double landmark_reprojection_error_threshold_ = 4.0;
 };
 
 struct LidarPointCloudInfo {

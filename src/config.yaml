@@ -56,13 +56,29 @@
   # -------------------------------------------------------------------
 
   # Lowe ratio-test threshold.
-  ratio_threshold: 0.75
+  ratio_threshold: 0.8
 
   # RANSAC pixel threshold used when estimating the fundamental matrix.
-  ransac_threshold: 1.0
+  ransac_threshold: 2.0
 
   # Minimum number of geometrically verified matches required for an image pair.
   min_inliers: 8
 
+  # Absolute cap on descriptor L2 distance for a match (applied in addition
+  # to the Lowe ratio test above). Lower values reject weaker matches and
+  # improve accuracy at the cost of fewer matches. Use -1 to disable.
+  sift_max_match_distance: 450
 
-  num_iteration: 20
+
+  num_iteration: 10
+
+
+  # Landmark filtering: after triangulating a landmark's world position,
+  # observations whose reprojection error exceeds this many pixels are
+  # dropped (and the landmark itself is dropped if too few observations
+  # remain).
+  landmark_reprojection_error_threshold: 8.0
+
+  # Limit how many images (from the start of camera_timestamp_path) to
+  # process. Use -1 to process all images.
+  max_images: 50
