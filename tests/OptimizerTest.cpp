@@ -102,7 +102,7 @@ TEST(BundleAdjustmentOptimizerTest, RecoversPosesAndLandmarksFromSyntheticData) 
     optimizer.SetPosePriorWeight(10.0);
     optimizer.SetDepthPriorWeight(10.0);
 
-    Status status = optimizer.Optimize();
+    Status status = optimizer.Optimize(true);
     ASSERT_TRUE(status.success) << status.message;
 
     std::map<int, SE3d> optimized_poses;

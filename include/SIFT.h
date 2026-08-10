@@ -26,6 +26,28 @@ public:
         Config& config,
         std::map<int, Landmark>& landmarks);
 
+    //----------------------------------------------------------
+    // Same as exhaust_pair_matching, but matches camera pairs
+    // in parallel via tbb.
+    //----------------------------------------------------------
+    static Status exhaust_pair_matching_parallel(
+        const std::map<int, Camera>& camera_map,
+        Config& config,
+        std::map<int, Landmark>& landmarks);
+
+
+    //----------------------------------------------------------
+    // Cache exhaust_pair_matching() results so a rerun can resume
+    // without redoing the expensive exhaustive matching.
+    //----------------------------------------------------------
+    static Status save_landmarks(
+        const std::string& file_path,
+        const std::map<int, Landmark>& landmarks);
+
+    static Status load_landmarks(
+        const std::string& file_path,
+        std::map<int, Landmark>& landmarks);
+
 
     //----------------------------------------------------------
     // Find 2 nearest descriptor matches
@@ -42,7 +64,8 @@ public:
     static void lowe_ratio_test(
         const std::vector<std::vector<cv::DMatch>>& knn_matches,
         std::vector<cv::DMatch>& ratio_matches,
-        float ratio_threshold);
+        float ratio_threshold,
+        float max_match_distance = -1.0f);
 
 
     //----------------------------------------------------------
@@ -84,4 +107,20 @@ public:
         const std::map<FeatureNode, FeatureNode>& parent,
         const std::map<int, Camera>& camera_map,
         std::map<int, Landmark>& landmark_map);
+
+    //----------------------------------------------------------
+    // Match + verify a single camera pair. Thread-safe: only
+    // reads camera_map, writes nothing shared.
+    //----------------------------------------------------------
+    static void match_pair(
+        int camera_id_1,
+        const Camera& camera_1,
+        int camera_id_2,
+        const Camera& camera_2,
+        float ratio_threshold,
+        double ransac_threshold,
+        int min_inliers,
+        std::vector<cv::DMatch>& verified_matches,
+        std::vector<uchar>& inlier_mask,
+        float max_match_distance = -1.0f);
 };

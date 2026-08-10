@@ -87,6 +87,10 @@ Config::Config(const std::string& yaml_path)
         lidar_kf_path_ =
             get_string("lidar_kf_path");
 
+        if(config["landmark_cache_path"]){
+            landmark_cache_path_ = get_string("landmark_cache_path");
+        }
+
         // SIFT
         sift_nfeatures_ =
             get_int("sift_nfeatures");
@@ -113,7 +117,26 @@ Config::Config(const std::string& yaml_path)
         min_inliers_ =
             get_int("min_inliers");
 
+        if(config["sift_max_match_distance"]){
+            sift_max_match_distance_ = get_double("sift_max_match_distance");
+        }
+
         num_iteration_ = get_int("num_iteration");
+
+        if(config["max_images"]){
+            max_images_ = get_int("max_images");
+        }
+
+        // Optional: fall back to the struct defaults if not present in the yaml.
+        if(config["ceres_max_iterations"]){
+            ceres_max_iterations_ = get_int("ceres_max_iterations");
+        }
+        if(config["ba_cost_threshold"]){
+            ba_cost_threshold_ = get_double("ba_cost_threshold");
+        }
+        if(config["landmark_reprojection_error_threshold"]){
+            landmark_reprojection_error_threshold_ = get_double("landmark_reprojection_error_threshold");
+        }
     }
     catch (const std::exception& e)
     {

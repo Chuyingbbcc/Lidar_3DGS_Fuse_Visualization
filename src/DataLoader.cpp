@@ -36,6 +36,13 @@ namespace fs = std::filesystem;
   return {true, "OK"};
 }
 
+void DataLoader::set_camera_map(const std::map<int, Camera>& camera_map){
+    camera_map_ = camera_map;
+}
+
+void DataLoader::set_lidar_info_map(const std::map<int, LidarPointCloudInfo>& lidar_info_map){
+    lidar_info_map_ = lidar_info_map;
+}
 
 std::map<int, Camera>& DataLoader::get_camera_map(){
  return camera_map_;
@@ -255,6 +262,10 @@ void DataLoader::load_camera(){
     int img_height = 0;
 
     while (file >> image_name >> timestamp) {
+        if (config_.max_images_ >= 0 &&
+            camera_id >= config_.max_images_) {
+            break;
+        }
 
         Camera camera;
         camera.camera_id_ = camera_id;
@@ -263,6 +274,10 @@ void DataLoader::load_camera(){
 
        // Full image path
         camera.camera_path_ = camera_img_dir + "/" + image_name;
+        if(!fs::exists(camera.camera_path_)){
+            //std::cerr << "[load_camera] Image not found, skipping: " << camera.camera_path_ << '\n';
+            continue;
+        }
         // Initial pose will be filled later
         camera.initial_T_cw_ = SE3d();
         camera.optimized_T_cw_ = SE3d();
@@ -435,7 +450,6 @@ void DataLoader::camera_lidar_association(){
             [](const auto& lhs, double value){
                 return lhs.first < value;
             });
-        std::cout << "Associating camera ID: " << camera_id << " with timestamp: " << t << std::endl;
         // if the lower bound is the first element, just use it
         if(it == lidar_time_table.begin()){
             // nothing to do here, handled below
@@ -519,14 +533,14 @@ void DataLoader::update_depth_map(const bool optimized){
         }
     };
 
-    const int window_size = 15;
+    const int window_size = 30;
     std::unordered_map<int, std::vector<Vec3d>> pointcloud_map;
     for(auto& [camera_id, camera] : camera_map_){
         int associated_lidar_id = camera.matched_lidar_id_;
         if(associated_lidar_id < 0) continue;
         int lower_bound = std::max(0, associated_lidar_id - window_size);
         int upper_bound = associated_lidar_id + window_size;
-        std::cout<<"Processing camera ID: " << camera_id << " with associated lidar ID: " << associated_lidar_id << std::endl;
+        //std::cout<<"Processing camera ID: " << camera_id << " with associated lidar ID: " << associated_lidar_id << std::endl;
         for(int lidar_id = lower_bound; lidar_id <= upper_bound; ++lidar_id){
             if(lidar_info_map_.find(lidar_id) == lidar_info_map_.end()) continue;
             const auto& lidar = lidar_info_map_.at(lidar_id);
@@ -548,7 +562,7 @@ void DataLoader::update_depth_map(const bool optimized){
 
 
 void DataLoader::update_depth_map_parallel(const bool optimized){
-    const int window_size = 15;
+    const int window_size = 50;
     // LiDAR -> world -> Camera projection
     auto project_lidar_to_camera = [](const std::vector<Vec3d>& points, const SE3d& T_cw, const SE3d& T_wl,
             const Mat3d& K, const int image_width, const int image_height, cv::Mat& depth_map) {
