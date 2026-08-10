@@ -5,32 +5,25 @@
 // src/main.cpp
 
 #include <iostream>
-
-#include <opencv2/core.hpp>
-
-#include <Eigen/Core>
-
-#include <ceres/ceres.h>
+#include <string>
 
 #include "BundleAdjustment.h"
 
 int main()
 {
-    std::cout << "========== Library Check ==========\n";
+    // config.yaml's paths (e.g. "../data/...") are relative to the working
+    // directory, so this must be run from the build/ directory (same
+    // convention as the tests).
+    const std::string config_path = "../src/config.yaml";
 
-    // OpenCV
-    std::cout << "OpenCV version : " << CV_VERSION << '\n';
+    BundleAdjustment bundle_adjustment(config_path);
+    Status status = bundle_adjustment.Run();
 
-    // Eigen
-    Eigen::Vector3d v(1.0, 2.0, 3.0);
-    std::cout << "Eigen vector   : "
-              << v.transpose() << '\n';
+    if (!status.success) {
+        std::cerr << "Bundle adjustment failed: " << status.message << std::endl;
+        return 1;
+    }
 
-    // Ceres
-    std::cout << "Ceres version  : "
-              << CERES_VERSION_STRING << '\n';
-
-    std::cout << "\nAll libraries linked successfully!\n";
-
+    std::cout << "Bundle adjustment finished: " << status.message << std::endl;
     return 0;
 }
