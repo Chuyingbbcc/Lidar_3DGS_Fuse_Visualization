@@ -3,7 +3,11 @@
 //
 
 #include "BaHelper.h"
+#include <algorithm>
+#include <cmath>
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 using namespace std;
 
 namespace {
@@ -64,10 +68,30 @@ Vec3d BaHelper::PixelToCamera(const Vec2d& pixel,double depth,const Mat3d& K){
 
 Status BaHelper::extract_landmark_world_pos(const std::map<int ,Camera>& camera_map, const CameraIntrinsic& intrinsic, const Config& config_, std::map<int, Landmark>&landmarks,  bool is_initial){
    //get camera intrinsic
-   for(auto& [lm_id, lm] : landmarks){
+   int removed_observations = 0;
+   int removed_landmarks = 0;
+   int removed_outlier_observations = 0;
+
+   for(auto lm_it = landmarks.begin(); lm_it != landmarks.end(); ){
+      Landmark& lm = lm_it->second;
+
+      // Drop observations with no valid depth association instead of just
+      // skipping them here - they're useless for triangulation on every
+      // future pass too.
+      const size_t before = lm.observations_.size();
+      lm.observations_.erase(
+         std::remove_if(lm.observations_.begin(), lm.observations_.end(),
+            [is_initial](const Observation& ob){
+               const double depth = is_initial ? ob.depth_ : ob.optimized_depth_;
+               return depth <= 0.0;
+            }),
+         lm.observations_.end());
+      removed_observations += static_cast<int>(before - lm.observations_.size());
 
       if(lm.observations_.size() < 2){
-          continue;
+         lm_it = landmarks.erase(lm_it);
+         ++removed_landmarks;
+         continue;
       }
 
       std::vector<Vec3d> world_points;
@@ -75,10 +99,7 @@ Status BaHelper::extract_landmark_world_pos(const std::map<int ,Camera>& camera_
 
       for(auto& ob : lm.observations_){
          //for each pixel, camera<-pixel, world<-camera
-         double depth = ob.depth_;
-         if(!is_initial){
-            depth = ob.optimized_depth_;
-         }
+         const double depth = is_initial ? ob.depth_ : ob.optimized_depth_;
 
          Vec3d cam_cor = PixelToCamera(ob.pixel_,depth,intrinsic.K);
 
@@ -95,6 +116,7 @@ Status BaHelper::extract_landmark_world_pos(const std::map<int ,Camera>& camera_
       }
 
       if(world_points.empty()){
+         ++lm_it;
          continue;
       }
 
@@ -103,19 +125,129 @@ Status BaHelper::extract_landmark_world_pos(const std::map<int ,Camera>& camera_
       // distances rather than squared distances.
       Vec3d pos_w_medium = geometric_median(world_points);
 
+      // Reproject the triangulated point into every observing camera and
+      // drop observations whose pixel error is too large - these are
+      // likely bad feature matches that would otherwise corrupt the BA.
+      const double reproj_threshold = config_.landmark_reprojection_error_threshold_;
+      const size_t before_reproj = lm.observations_.size();
+      lm.observations_.erase(
+         std::remove_if(lm.observations_.begin(), lm.observations_.end(),
+            [&](const Observation& ob){
+               auto camera_it = camera_map.find(ob.camera_id_);
+               if(camera_it == camera_map.end()){
+                  return false;
+               }
+               const SE3d& T_cw = is_initial ? camera_it->second.initial_T_cw_ : camera_it->second.optimized_T_cw_;
+               const Vec3d point_c = T_cw * pos_w_medium;
+               if(point_c.z() <= 0.0){
+                  return true; // behind the camera, can't be a real observation
+               }
+               const double u = intrinsic.fx() * point_c.x() / point_c.z() + intrinsic.cx();
+               const double v = intrinsic.fy() * point_c.y() / point_c.z() + intrinsic.cy();
+               const double du = u - ob.pixel_.x();
+               const double dv = v - ob.pixel_.y();
+               return std::sqrt(du * du + dv * dv) > reproj_threshold;
+            }),
+         lm.observations_.end());
+      removed_outlier_observations += static_cast<int>(before_reproj - lm.observations_.size());
+
+      if(lm.observations_.size() < 2){
+         lm_it = landmarks.erase(lm_it);
+         ++removed_landmarks;
+         continue;
+      }
+
       if(is_initial){
        lm.initial_position_ = pos_w_medium;
       }else{
        lm.optimized_ = true;
        lm.optimized_position_ = pos_w_medium;
       }
+
+      std::cout << "[extract_landmark_world_pos] landmark " << lm_it->first
+                 << " has " << lm.observations_.size() << " observations" << std::endl;
+
+      ++lm_it;
    }// loop end, land mark
+
+   if(removed_observations > 0 || removed_landmarks > 0 || removed_outlier_observations > 0){
+      std::cout << "[extract_landmark_world_pos] removed " << removed_observations
+                 << " depth-less observations, " << removed_outlier_observations
+                 << " reprojection outlier observations, dropped " << removed_landmarks
+                 << " landmarks left with < 2 observations" << std::endl;
+   }
+
+   std::cout << "[extract_landmark_world_pos] " << landmarks.size()
+              << " valid landmarks remaining after filtering" << std::endl;
+
    return {true, "OK"};
 }
 
 
 Status  BaHelper::writeOptimziedCamera(std::map<int ,Camera>& camera_map, Config& config){
-  return {true, "write done"};
+   const std::string& output_path = config.output_path_;
+
+   std::filesystem::path path(output_path);
+   if(path.has_parent_path()){
+      std::filesystem::create_directories(path.parent_path());
+   }
+
+   std::ofstream fout(output_path);
+   if(!fout.is_open()){
+      return {false, "Cannot open output file for writing: " + output_path};
+   }
+
+   fout << "# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, IMAGE_NAME\n";
+
+   int written_count = 0;
+   for(const auto& [camera_id, camera] : camera_map){
+      // COLMAP's images.txt stores the world->camera transform directly
+      // (T_cw), unlike save_trajectory()'s T_wc used for TUM-style plotting.
+      const SE3d& T_cw = camera.optimized_T_cw_;
+      const Vec3d t = T_cw.translation();
+      const Eigen::Quaterniond q = T_cw.unit_quaternion();
+
+      // COLMAP IDs are 1-indexed; this project uses a single shared camera
+      // model, hence CAMERA_ID is always 1.
+      fout << (camera_id + 1) << " "
+           << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << " "
+           << t.x() << " " << t.y() << " " << t.z() << " "
+           << 1 << " "
+           << camera.camera_name_ << "\n";
+      // COLMAP's images.txt has a second (POINTS2D) line per image; leave it
+      // blank since we don't track 2D-3D correspondences here.
+      fout << "\n";
+      ++written_count;
+   }
+
+   fout.close();
+   return {true, "Wrote " + std::to_string(written_count) + " optimized camera poses to " + output_path};
+}
+
+Status BaHelper::save_trajectory(const std::map<int ,Camera>& camera_map, const std::string& output_path, bool use_optimized){
+   std::filesystem::path path(output_path);
+   if(path.has_parent_path()){
+      std::filesystem::create_directories(path.parent_path());
+   }
+
+   std::ofstream fout(output_path);
+   if(!fout.is_open()){
+      return {false, "Cannot open trajectory file for writing: " + output_path};
+   }
+
+   for(const auto& [camera_id, camera] : camera_map){
+      const SE3d& T_cw = use_optimized ? camera.optimized_T_cw_ : camera.initial_T_cw_;
+      const SE3d T_wc = T_cw.inverse();
+      const Vec3d t = T_wc.translation();
+      const Eigen::Quaterniond q = T_wc.unit_quaternion();
+
+      fout << camera.time_stamp_ << " "
+           << t.x() << " " << t.y() << " " << t.z() << " "
+           << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << "\n";
+   }
+
+   fout.close();
+   return {true, "Trajectory written to " + output_path};
 }
 
 Status BaHelper::update_observation_depth(const std::map<int ,Camera>& camera_map, std::map<int, Landmark>& landmarks, bool is_initial){
