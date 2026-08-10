@@ -262,6 +262,10 @@ void DataLoader::load_camera(){
     int img_height = 0;
 
     while (file >> image_name >> timestamp) {
+        if (config_.max_images_ >= 0 &&
+            camera_id >= config_.max_images_) {
+            break;
+        }
 
         Camera camera;
         camera.camera_id_ = camera_id;
@@ -270,6 +274,10 @@ void DataLoader::load_camera(){
 
        // Full image path
         camera.camera_path_ = camera_img_dir + "/" + image_name;
+        if(!fs::exists(camera.camera_path_)){
+            //std::cerr << "[load_camera] Image not found, skipping: " << camera.camera_path_ << '\n';
+            continue;
+        }
         // Initial pose will be filled later
         camera.initial_T_cw_ = SE3d();
         camera.optimized_T_cw_ = SE3d();
@@ -525,7 +533,7 @@ void DataLoader::update_depth_map(const bool optimized){
         }
     };
 
-    const int window_size = 15;
+    const int window_size = 30;
     std::unordered_map<int, std::vector<Vec3d>> pointcloud_map;
     for(auto& [camera_id, camera] : camera_map_){
         int associated_lidar_id = camera.matched_lidar_id_;
@@ -554,7 +562,7 @@ void DataLoader::update_depth_map(const bool optimized){
 
 
 void DataLoader::update_depth_map_parallel(const bool optimized){
-    const int window_size = 15;
+    const int window_size = 50;
     // LiDAR -> world -> Camera projection
     auto project_lidar_to_camera = [](const std::vector<Vec3d>& points, const SE3d& T_cw, const SE3d& T_wl,
             const Mat3d& K, const int image_width, const int image_height, cv::Mat& depth_map) {
