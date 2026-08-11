@@ -69,6 +69,10 @@
   # improve accuracy at the cost of fewer matches. Use -1 to disable.
   sift_max_match_distance: 450
 
+  # Match each image with this many subsequent images in timestamp/map order.
+  # For example, 3 evaluates (0,1), (0,2), (0,3), then the same window from 1.
+  sequential_match_window_size: 5
+
 
   num_iteration: 10
 
@@ -81,4 +85,4 @@
 
   # Limit how many images (from the start of camera_timestamp_path) to
   # process. Use -1 to process all images.
-  max_images: 50
+  max_images: -1
