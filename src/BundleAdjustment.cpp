@@ -49,8 +49,8 @@ Status BundleAdjustment::Run(){
    std::map<int, Landmark> landmarks;
    status = SIFT::load_landmarks(config_.landmark_cache_path_, landmarks);
    if(!status.success){
-      cout << "[BA] no usable landmark cache, running exhaustive matching: " << status.message << endl;
-      status = SIFT::exhaust_pair_matching_parallel(camera_map, config_, landmarks);
+      cout << "[BA] no usable landmark cache, running sequential window matching: " << status.message << endl;
+      status = SIFT::sequential_pair_matching(camera_map, config_, landmarks);
       if(!status.success){
          cout<<status.message<<endl;
             return status;
@@ -145,5 +145,4 @@ Status BundleAdjustment::Run(){
 
    return status;
 }
-
 
