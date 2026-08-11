@@ -880,6 +880,129 @@ void SIFT::match_pair(
 
 
 // ============================================================
+// Sequential pair matching
+// ============================================================
+
+Status SIFT::sequential_pair_matching(
+    const std::map<int, Camera>& camera_map,
+    Config& config,
+    std::map<int, Landmark>& landmarks)
+{
+    landmarks.clear();
+
+    const int window_size =
+        config.sequential_match_window_size_;
+
+    if (window_size <= 0)
+    {
+        return {
+            false,
+            "sequential_match_window_size must be greater than zero."
+        };
+    }
+
+    const float ratio_threshold =
+        static_cast<float>(config.ratio_threshold_);
+    const double ransac_threshold =
+        config.ransac_threshold_;
+    const int min_inliers =
+        config.min_inliers_;
+    const float max_match_distance =
+        static_cast<float>(config.sift_max_match_distance_);
+
+    // Preserve map order even when a camera has no descriptors. The window
+    // describes neighboring frames, not neighboring non-empty descriptors.
+    std::vector<std::pair<int, const Camera*>> cameras;
+    cameras.reserve(camera_map.size());
+
+    for (const auto& [camera_id, camera] : camera_map)
+    {
+        cameras.emplace_back(camera_id, &camera);
+    }
+
+    std::map<FeatureNode, FeatureNode> parent;
+    size_t evaluated_pairs = 0;
+    size_t verified_pairs = 0;
+
+    for (size_t i = 0; i < cameras.size(); ++i)
+    {
+        if (cameras[i].second->descriptors_.empty())
+        {
+            continue;
+        }
+
+        const size_t window_end = std::min(
+            cameras.size(),
+            i + static_cast<size_t>(window_size) + 1);
+
+        for (size_t j = i + 1; j < window_end; ++j)
+        {
+            if (cameras[j].second->descriptors_.empty())
+            {
+                continue;
+            }
+
+            ++evaluated_pairs;
+
+            std::vector<cv::DMatch> verified_matches;
+            std::vector<uchar> inlier_mask;
+
+            match_pair(
+                cameras[i].first,
+                *cameras[i].second,
+                cameras[j].first,
+                *cameras[j].second,
+                ratio_threshold,
+                ransac_threshold,
+                min_inliers,
+                verified_matches,
+                inlier_mask,
+                max_match_distance);
+
+            if (verified_matches.empty())
+            {
+                continue;
+            }
+
+            ++verified_pairs;
+            union_matches(
+                cameras[i].first,
+                cameras[j].first,
+                verified_matches,
+                inlier_mask,
+                parent);
+
+            std::cout
+                << "Camera " << cameras[i].first
+                << " <-> " << cameras[j].first
+                << " | ratio matches: " << verified_matches.size()
+                << " | inliers: "
+                << std::count(inlier_mask.begin(), inlier_mask.end(), 1)
+                << std::endl;
+        }
+    }
+
+    extract_landmark_map(parent, camera_map, landmarks);
+
+    std::cout
+        << "Sequential matching evaluated " << evaluated_pairs
+        << " pairs in a window of " << window_size
+        << ", verified " << verified_pairs
+        << ", and generated " << landmarks.size()
+        << " landmark tracks." << std::endl;
+
+    return {
+        true,
+        "Sequential feature matching done! Evaluated "
+            + std::to_string(evaluated_pairs)
+            + " pairs and generated "
+            + std::to_string(landmarks.size())
+            + " landmarks."
+    };
+}
+
+
+// ============================================================
 // Exhaustive pair matching
 // ============================================================
 

@@ -27,6 +27,15 @@ public:
         std::map<int, Landmark>& landmarks);
 
     //----------------------------------------------------------
+    // Match each camera with the next configured number of
+    // cameras in map order.
+    //----------------------------------------------------------
+    static Status sequential_pair_matching(
+        const std::map<int, Camera>& camera_map,
+        Config& config,
+        std::map<int, Landmark>& landmarks);
+
+    //----------------------------------------------------------
     // Same as exhaust_pair_matching, but matches camera pairs
     // in parallel via tbb.
     //----------------------------------------------------------
