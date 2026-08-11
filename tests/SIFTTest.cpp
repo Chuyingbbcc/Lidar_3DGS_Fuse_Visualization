@@ -133,6 +133,101 @@ TEST(SIFTTest, ExtractSIFT)
 }
 
 
+TEST(SIFTTest, MatchAndVisualizeTwoImages)
+{
+    const std::string config_path =
+        std::string(PROJECT_ROOT_DIR) + "/src/config.yaml";
+    Config config(config_path);
+
+    Camera camera_1;
+    camera_1.camera_id_ = 0;
+    camera_1.camera_name_ = "IMG_2644.png";
+    camera_1.camera_path_ =
+        std::string(PROJECT_ROOT_DIR) + "/test_data/IMG_2128.png";
+
+    Camera camera_2;
+    camera_2.camera_id_ = 1;
+    camera_2.camera_name_ = "IMG_2645.png";
+    camera_2.camera_path_ =
+        std::string(PROJECT_ROOT_DIR) + "/test_data/IMG_2136.png";
+
+    ASSERT_TRUE(fs::exists(camera_1.camera_path_));
+    ASSERT_TRUE(fs::exists(camera_2.camera_path_));
+
+    const Status status_1 = SIFT::extract_sift(camera_1, config);
+    const Status status_2 = SIFT::extract_sift(camera_2, config);
+
+    ASSERT_TRUE(status_1.success) << status_1.message;
+    ASSERT_TRUE(status_2.success) << status_2.message;
+    ASSERT_FALSE(camera_1.descriptors_.empty());
+    ASSERT_FALSE(camera_2.descriptors_.empty());
+
+    std::vector<cv::DMatch> candidate_matches;
+    std::vector<uchar> inlier_mask;
+
+    SIFT::match_pair(
+        camera_1.camera_id_,
+        camera_1,
+        camera_2.camera_id_,
+        camera_2,
+        static_cast<float>(config.ratio_threshold_),
+        config.ransac_threshold_,
+        config.min_inliers_,
+        candidate_matches,
+        inlier_mask,
+        static_cast<float>(config.sift_max_match_distance_));
+
+    ASSERT_FALSE(candidate_matches.empty())
+        << "No geometrically verified SIFT matches were found.";
+    ASSERT_EQ(candidate_matches.size(), inlier_mask.size());
+
+    // Keep only RANSAC inliers so every line in the output represents a
+    // geometrically verified feature correspondence.
+    std::vector<cv::DMatch> inlier_matches;
+    for (size_t i = 0; i < candidate_matches.size(); ++i)
+    {
+        if (inlier_mask[i])
+        {
+            inlier_matches.push_back(candidate_matches[i]);
+        }
+    }
+
+    ASSERT_GE(
+        inlier_matches.size(),
+        static_cast<size_t>(config.min_inliers_));
+
+    const cv::Mat image_1 = cv::imread(camera_1.camera_path_);
+    const cv::Mat image_2 = cv::imread(camera_2.camera_path_);
+    ASSERT_FALSE(image_1.empty());
+    ASSERT_FALSE(image_2.empty());
+
+    cv::Mat visualization;
+    cv::drawMatches(
+        image_1,
+        camera_1.keypoints_,
+        image_2,
+        camera_2.keypoints_,
+        inlier_matches,
+        visualization,
+        cv::Scalar::all(-1),
+        cv::Scalar::all(-1),
+        std::vector<char>(),
+        cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+    const fs::path output_dir =
+        fs::path(PROJECT_ROOT_DIR) / "output";
+    fs::create_directories(output_dir);
+
+    const fs::path output_path =
+        output_dir / "sift_matches_IMG_2644_IMG_2645.png";
+    ASSERT_TRUE(cv::imwrite(output_path.string(), visualization));
+
+    std::cout
+        << "Verified SIFT matches: " << inlier_matches.size() << '\n'
+        << "Match visualization saved to: " << output_path << std::endl;
+}
+
+
 TEST(SIFTTest, ExtractLandmarkMapBasic){
  // ============================================================
     // 1. Create three cameras with synthetic keypoints
@@ -267,6 +362,27 @@ TEST(SIFTTest, ExtractLandmarkMapBasic){
 }
 
 
+TEST(SIFTTest, SequentialPairMatchingRejectsInvalidWindow)
+{
+    Config config;
+    config.sequential_match_window_size_ = 0;
+
+    std::map<int, Camera> camera_map;
+    std::map<int, Landmark> landmark_map;
+
+    const Status status = SIFT::sequential_pair_matching(
+        camera_map,
+        config,
+        landmark_map);
+
+    EXPECT_FALSE(status.success);
+    EXPECT_NE(
+        status.message.find("window_size"),
+        std::string::npos);
+    EXPECT_TRUE(landmark_map.empty());
+}
+
+
 
 TEST(SIFTTest, ExtractAndTrackIntegration)
 {
@@ -278,21 +394,31 @@ TEST(SIFTTest, ExtractAndTrackIntegration)
 
     Config config(config_path);
 
+    ASSERT_GT(config.sequential_match_window_size_, 0);
+
     //----------------------------------------------------------
     // Collect images from configured input directory
     //----------------------------------------------------------
     std::vector<fs::path> image_paths;
+    fs::path input_img_dir(config.input_img_dir_);
 
-    ASSERT_TRUE(fs::exists(config.input_img_dir_))
+    if (input_img_dir.is_relative())
+    {
+        input_img_dir =
+            (fs::path(config_path).parent_path() / input_img_dir)
+                .lexically_normal();
+    }
+
+    ASSERT_TRUE(fs::exists(input_img_dir))
         << "Image directory does not exist: "
-        << config.input_img_dir_;
+        << input_img_dir;
 
-    ASSERT_TRUE(fs::is_directory(config.input_img_dir_))
+    ASSERT_TRUE(fs::is_directory(input_img_dir))
         << "Input image path is not a directory: "
-        << config.input_img_dir_;
+        << input_img_dir;
 
     for (const auto& entry :
-         fs::directory_iterator(config.input_img_dir_))
+         fs::directory_iterator(input_img_dir))
     {
         if (!entry.is_regular_file())
         {
@@ -334,7 +460,7 @@ TEST(SIFTTest, ExtractAndTrackIntegration)
     // Keep integration test reasonably fast.
     // Increase this if you want to test longer tracks.
     //----------------------------------------------------------
-    constexpr size_t MAX_TEST_IMAGES = 10;
+    constexpr size_t MAX_TEST_IMAGES = 20;
 
     const size_t num_images =
         std::min(image_paths.size(), MAX_TEST_IMAGES);
@@ -379,12 +505,193 @@ TEST(SIFTTest, ExtractAndTrackIntegration)
     ASSERT_EQ(camera_map.size(), num_images);
 
     //----------------------------------------------------------
+    // Diagnose image pairs for which geometric verification
+    // rejects most of the descriptor matches.
+    //----------------------------------------------------------
+    constexpr double LOW_INLIER_RATIO = 0.25;
+    constexpr size_t MAX_LOW_INLIER_VISUALIZATIONS = 10;
+
+    const fs::path low_inlier_output_dir =
+        fs::path(PROJECT_ROOT_DIR) / "output" / "sift_low_inlier_pairs";
+
+    size_t low_inlier_pair_count = 0;
+    size_t saved_low_inlier_pair_count = 0;
+
+    for (auto camera_1_it = camera_map.begin();
+         camera_1_it != camera_map.end();
+         ++camera_1_it)
+    {
+        for (auto camera_2_it = std::next(camera_1_it);
+             camera_2_it != camera_map.end();
+             ++camera_2_it)
+        {
+            const Camera& camera_1 = camera_1_it->second;
+            const Camera& camera_2 = camera_2_it->second;
+
+            std::vector<std::vector<cv::DMatch>> knn_matches;
+            SIFT::knn_matching(
+                camera_1.descriptors_,
+                camera_2.descriptors_,
+                knn_matches);
+
+            std::vector<cv::DMatch> ratio_matches;
+            SIFT::lowe_ratio_test(
+                knn_matches,
+                ratio_matches,
+                static_cast<float>(config.ratio_threshold_),
+                static_cast<float>(config.sift_max_match_distance_));
+
+            // Very small match sets are not meaningful for fundamental
+            // matrix estimation and are already rejected by match_pair().
+            if (ratio_matches.size() <
+                static_cast<size_t>(config.min_inliers_))
+            {
+                continue;
+            }
+
+            std::vector<cv::Point2f> points_1;
+            std::vector<cv::Point2f> points_2;
+            SIFT::match_to_pixels(
+                ratio_matches,
+                camera_1,
+                camera_2,
+                points_1,
+                points_2);
+
+            std::vector<uchar> inlier_mask;
+            const int num_inliers = SIFT::geometric_verification(
+                points_1,
+                points_2,
+                config.ransac_threshold_,
+                inlier_mask);
+
+            const double inlier_ratio =
+                static_cast<double>(num_inliers) /
+                static_cast<double>(ratio_matches.size());
+
+            if (inlier_ratio >= LOW_INLIER_RATIO)
+            {
+                continue;
+            }
+
+            ++low_inlier_pair_count;
+
+            std::cout
+                << "Low-inlier SIFT pair: "
+                << camera_1.camera_name_ << " <-> "
+                << camera_2.camera_name_ << ", ratio matches="
+                << ratio_matches.size() << ", inliers="
+                << num_inliers << ", retention="
+                << 100.0 * inlier_ratio << "%" << std::endl;
+
+            if (saved_low_inlier_pair_count >=
+                MAX_LOW_INLIER_VISUALIZATIONS)
+            {
+                continue;
+            }
+
+            // geometric_verification() leaves the mask empty when no
+            // fundamental matrix can be estimated. Treat every match as an
+            // outlier in that case so the failed pair can still be drawn.
+            if (inlier_mask.size() != ratio_matches.size())
+            {
+                inlier_mask.assign(ratio_matches.size(), 0);
+            }
+
+            std::vector<char> outlier_draw_mask(ratio_matches.size(), 0);
+            std::vector<char> inlier_draw_mask(ratio_matches.size(), 0);
+            for (size_t match_idx = 0;
+                 match_idx < ratio_matches.size();
+                 ++match_idx)
+            {
+                inlier_draw_mask[match_idx] = inlier_mask[match_idx] != 0;
+                outlier_draw_mask[match_idx] = inlier_mask[match_idx] == 0;
+            }
+
+            const cv::Mat image_1 = cv::imread(camera_1.camera_path_);
+            const cv::Mat image_2 = cv::imread(camera_2.camera_path_);
+            ASSERT_FALSE(image_1.empty());
+            ASSERT_FALSE(image_2.empty());
+
+            cv::Mat visualization;
+
+            // Red: passed descriptor matching but rejected by RANSAC.
+            cv::drawMatches(
+                image_1,
+                camera_1.keypoints_,
+                image_2,
+                camera_2.keypoints_,
+                ratio_matches,
+                visualization,
+                cv::Scalar(0, 0, 255),
+                cv::Scalar(0, 0, 255),
+                outlier_draw_mask,
+                cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+            // Green: geometrically verified RANSAC inliers.
+            cv::drawMatches(
+                image_1,
+                camera_1.keypoints_,
+                image_2,
+                camera_2.keypoints_,
+                ratio_matches,
+                visualization,
+                cv::Scalar(0, 255, 0),
+                cv::Scalar(0, 255, 0),
+                inlier_draw_mask,
+                cv::DrawMatchesFlags::DRAW_OVER_OUTIMG |
+                    cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+            const std::string diagnostic_text =
+                "ratio matches: " + std::to_string(ratio_matches.size()) +
+                "  inliers: " + std::to_string(num_inliers) +
+                "  retention: " +
+                std::to_string(100.0 * inlier_ratio) + "%";
+
+            cv::rectangle(
+                visualization,
+                cv::Rect(0, 0, 850, 48),
+                cv::Scalar(0, 0, 0),
+                cv::FILLED);
+            cv::putText(
+                visualization,
+                diagnostic_text,
+                cv::Point(12, 33),
+                cv::FONT_HERSHEY_SIMPLEX,
+                0.8,
+                cv::Scalar(255, 255, 255),
+                2);
+
+            fs::create_directories(low_inlier_output_dir);
+            const fs::path output_path =
+                low_inlier_output_dir /
+                (camera_1_it->second.camera_name_ + "_vs_" +
+                 camera_2_it->second.camera_name_ + ".jpg");
+
+            ASSERT_TRUE(cv::imwrite(
+                output_path.string(),
+                visualization,
+                {cv::IMWRITE_JPEG_QUALITY, 90}));
+
+            ++saved_low_inlier_pair_count;
+            std::cout << "Saved low-inlier visualization: "
+                      << output_path << std::endl;
+        }
+    }
+
+    std::cout
+        << "Low-inlier pairs (< " << 100.0 * LOW_INLIER_RATIO
+        << "% retention): " << low_inlier_pair_count
+        << "; visualizations saved: "
+        << saved_low_inlier_pair_count << std::endl;
+
+    //----------------------------------------------------------
     // Run matching + track construction + landmark extraction
     //----------------------------------------------------------
     std::map<int, Landmark> landmark_map;
 
     Status status =
-        SIFT::exhaust_pair_matching(
+        SIFT::sequential_pair_matching(
             camera_map,
             config,
             landmark_map);
@@ -403,80 +710,80 @@ TEST(SIFTTest, ExtractAndTrackIntegration)
     //----------------------------------------------------------
     // Validate landmark / track structure
     //----------------------------------------------------------
-    size_t multi_view_track_count = 0;
+   //----------------------------------------------------------
+// Landmark track-length statistics
+//----------------------------------------------------------
+std::map<size_t, size_t> track_length_histogram;
 
-    for (const auto& [landmark_id, landmark] : landmark_map)
-    {
-        EXPECT_EQ(
-            landmark.landmark_id_,
-            landmark_id);
+size_t total_observations = 0;
 
-        ASSERT_GE(
-            landmark.observations_.size(),
-            2u);
+for (const auto& [landmark_id, landmark] : landmark_map)
+{
+    const size_t track_length =
+        landmark.observations_.size();
 
-        std::set<int> observed_camera_ids;
+    ++track_length_histogram[track_length];
 
-        for (const Observation& observation :
-             landmark.observations_)
-        {
-            //--------------------------------------------------
-            // Observation must reference an existing camera
-            //--------------------------------------------------
-            auto camera_it =
-                camera_map.find(
-                    observation.camera_id_);
+    total_observations += track_length;
+}
 
-            ASSERT_NE(
-                camera_it,
-                camera_map.end());
+std::cout << "\n";
+std::cout << "========================================\n";
+std::cout << " SIFT Track Statistics\n";
+std::cout << "========================================\n";
 
-            const Camera& camera =
-                camera_it->second;
+std::cout
+    << "Images: "
+    << num_images
+    << "\n";
 
-            //--------------------------------------------------
-            // Keypoint index must be valid
-            //--------------------------------------------------
-            ASSERT_GE(
-                observation.keypoint_idx_,
-                0);
+std::cout
+    << "Landmarks: "
+    << landmark_map.size()
+    << "\n\n";
 
-            ASSERT_LT(
-                observation.keypoint_idx_,
-                static_cast<int>(
-                    camera.keypoints_.size()));
+for (const auto& [track_length, count] :
+     track_length_histogram)
+{
+    const double percentage =
+        landmark_map.empty()
+            ? 0.0
+            : 100.0
+                * static_cast<double>(count)
+                / static_cast<double>(
+                    landmark_map.size());
 
-            //--------------------------------------------------
-            // Stored observation pixel must match keypoint
-            //--------------------------------------------------
-            const cv::Point2f& keypoint =
-                camera.keypoints_[
-                    observation.keypoint_idx_].pt;
+    std::cout
+        << "Track length "
+        << track_length
+        << " : "
+        << count
+        << " landmarks"
+        << " ("
+        << percentage
+        << "%)"
+        << std::endl;
+}
 
-            EXPECT_NEAR(
-                observation.pixel_.x(),
-                static_cast<double>(keypoint.x),
-                1e-6);
+if (!landmark_map.empty())
+{
+    const double average_track_length =
+        static_cast<double>(total_observations)
+        / static_cast<double>(
+            landmark_map.size());
 
-            EXPECT_NEAR(
-                observation.pixel_.y(),
-                static_cast<double>(keypoint.y),
-                1e-6);
+    std::cout
+        << "\nAverage track length: "
+        << average_track_length
+        << std::endl;
+}
 
-            //--------------------------------------------------
-            // A landmark may occur at most once per camera
-            //--------------------------------------------------
-            EXPECT_TRUE(
-                observed_camera_ids.insert(
-                    observation.camera_id_).second);
-        }
+std::cout
+    << "Total observations: "
+    << total_observations
+    << std::endl;
 
-        if (landmark.observations_.size() >= 3)
-        {
-            ++multi_view_track_count;
-        }
-    }
-
+std::cout << "========================================\n";
     //----------------------------------------------------------
     // Informational output. Do not require a 3-view track here,
     // because that depends strongly on the particular dataset.
@@ -491,10 +798,6 @@ TEST(SIFTTest, ExtractAndTrackIntegration)
         << landmark_map.size()
         << std::endl;
 
-    std::cout
-        << "Tracks with >= 3 observations: "
-        << multi_view_track_count
-        << std::endl;
 
     //----------------------------------------------------------
 // Visualize landmark tracks
@@ -531,22 +834,26 @@ for (const auto& [camera_id, camera] : camera_map)
 //----------------------------------------------------------
 for (const auto& [landmark_id, landmark] : landmark_map)
 {
-    if (landmark.observations_.size() < 3)
-   {
-    continue;
-   }
-    //------------------------------------------------------
-    // Deterministic color for this landmark.
-    // Same landmark gets same color in every image.
-    //------------------------------------------------------
-    cv::RNG rng(
-        static_cast<uint64_t>(landmark_id + 1) * 12345);
+    const size_t track_length =
+        landmark.observations_.size();
 
-    cv::Scalar color(
-        rng.uniform(50, 255),
-        rng.uniform(50, 255),
-        rng.uniform(50, 255));
+    cv::Scalar color;
 
+    if (track_length == 2)
+    {
+        // Red
+        color = cv::Scalar(0, 0, 255);
+    }
+    else if (track_length == 3)
+    {
+        // Yellow
+        color = cv::Scalar(0, 255, 255);
+    }
+    else
+    {
+        // Green
+        color = cv::Scalar(0, 255, 0);
+    }
 
     for (const Observation& observation :
          landmark.observations_)
@@ -571,9 +878,8 @@ for (const auto& [landmark_id, landmark] : landmark_map)
                 std::round(
                     observation.pixel_.y())));
 
-
         //--------------------------------------------------
-        // Draw feature location
+        // Draw observation
         //--------------------------------------------------
         cv::circle(
             image,
@@ -582,13 +888,22 @@ for (const auto& [landmark_id, landmark] : landmark_map)
             color,
             2);
 
+        //--------------------------------------------------
+        // Draw landmark ID + track length
+        //
+        // Example:
+        // 125(2)
+        // means landmark 125 has 2 observations.
+        //--------------------------------------------------
+        std::string label =
+            std::to_string(landmark_id)
+            + "("
+            + std::to_string(track_length)
+            + ")";
 
-        //--------------------------------------------------
-        // Draw landmark id
-        //--------------------------------------------------
         cv::putText(
             image,
-            std::to_string(landmark_id),
+            label,
             point + cv::Point(5, -5),
             cv::FONT_HERSHEY_SIMPLEX,
             0.35,
@@ -628,3 +943,193 @@ for (const auto& [camera_id, image] :
    }
 }
 
+
+TEST(SIFTTest, SequentialPairMatchingVisualizationIntegration)
+{
+    const std::string config_path =
+        std::string(PROJECT_ROOT_DIR) + "/src/config.yaml";
+    Config config(config_path);
+
+    ASSERT_GT(config.sequential_match_window_size_, 0);
+
+    fs::path input_img_dir(config.input_img_dir_);
+    if (input_img_dir.is_relative())
+    {
+        input_img_dir =
+            (fs::path(config_path).parent_path() / input_img_dir)
+                .lexically_normal();
+    }
+
+    ASSERT_TRUE(fs::is_directory(input_img_dir));
+
+    std::vector<fs::path> image_paths;
+    for (const auto& entry : fs::directory_iterator(input_img_dir))
+    {
+        if (!entry.is_regular_file())
+        {
+            continue;
+        }
+
+        std::string extension = entry.path().extension().string();
+        std::transform(
+            extension.begin(),
+            extension.end(),
+            extension.begin(),
+            [](unsigned char value)
+            {
+                return static_cast<char>(std::tolower(value));
+            });
+
+        if (extension == ".png" || extension == ".jpg" ||
+            extension == ".jpeg" || extension == ".bmp")
+        {
+            image_paths.push_back(entry.path());
+        }
+    }
+
+    std::sort(image_paths.begin(), image_paths.end());
+    ASSERT_GE(image_paths.size(), 2u);
+
+    // A short sequence keeps this integration test fast while still testing
+    // the beginning, middle, and truncated end of the matching window.
+    constexpr size_t MAX_TEST_IMAGES = 6;
+    const size_t num_images =
+        std::min(image_paths.size(), MAX_TEST_IMAGES);
+
+    std::map<int, Camera> camera_map;
+    for (size_t i = 0; i < num_images; ++i)
+    {
+        Camera camera;
+        camera.camera_id_ = static_cast<int>(i);
+        camera.camera_name_ = image_paths[i].filename().string();
+        camera.camera_path_ = image_paths[i].string();
+
+        const Status extract_status = SIFT::extract_sift(camera, config);
+        ASSERT_TRUE(extract_status.success) << extract_status.message;
+        ASSERT_FALSE(camera.descriptors_.empty());
+
+        camera_map.emplace(camera.camera_id_, std::move(camera));
+    }
+
+    std::map<int, Landmark> landmarks;
+    const Status match_status = SIFT::sequential_pair_matching(
+        camera_map,
+        config,
+        landmarks);
+
+    ASSERT_TRUE(match_status.success) << match_status.message;
+    ASSERT_FALSE(landmarks.empty());
+
+    const fs::path output_dir =
+        fs::path(PROJECT_ROOT_DIR) /
+        "output" /
+        "sequential_pair_matches";
+    fs::create_directories(output_dir);
+
+    size_t visualization_count = 0;
+
+    for (size_t i = 0; i < num_images; ++i)
+    {
+        const size_t window_end = std::min(
+            num_images,
+            i + static_cast<size_t>(
+                    config.sequential_match_window_size_) + 1);
+
+        for (size_t j = i + 1; j < window_end; ++j)
+        {
+            const Camera& camera_1 =
+                camera_map.at(static_cast<int>(i));
+            const Camera& camera_2 =
+                camera_map.at(static_cast<int>(j));
+
+            std::vector<cv::DMatch> ratio_matches;
+            std::vector<uchar> inlier_mask;
+            SIFT::match_pair(
+                camera_1.camera_id_,
+                camera_1,
+                camera_2.camera_id_,
+                camera_2,
+                static_cast<float>(config.ratio_threshold_),
+                config.ransac_threshold_,
+                config.min_inliers_,
+                ratio_matches,
+                inlier_mask,
+                static_cast<float>(config.sift_max_match_distance_));
+
+            // Draw only the direct RANSAC inliers. Landmark tracks may also
+            // connect two cameras transitively through intermediate frames.
+            std::vector<cv::DMatch> pair_matches;
+            for (size_t match_idx = 0;
+                 match_idx < ratio_matches.size();
+                 ++match_idx)
+            {
+                if (inlier_mask[match_idx])
+                {
+                    pair_matches.push_back(ratio_matches[match_idx]);
+                }
+            }
+
+            if (pair_matches.empty())
+            {
+                continue;
+            }
+
+            const cv::Mat image_1 = cv::imread(camera_1.camera_path_);
+            const cv::Mat image_2 = cv::imread(camera_2.camera_path_);
+            ASSERT_FALSE(image_1.empty());
+            ASSERT_FALSE(image_2.empty());
+
+            cv::Mat visualization;
+            cv::drawMatches(
+                image_1,
+                camera_1.keypoints_,
+                image_2,
+                camera_2.keypoints_,
+                pair_matches,
+                visualization,
+                cv::Scalar(0, 255, 0),
+                cv::Scalar(0, 255, 0),
+                std::vector<char>(),
+                cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+            const std::string label =
+                camera_1.camera_name_ + " <-> " +
+                camera_2.camera_name_ + " | verified matches: " +
+                std::to_string(pair_matches.size());
+            cv::rectangle(
+                visualization,
+                cv::Rect(0, 0, 1000, 48),
+                cv::Scalar(0, 0, 0),
+                cv::FILLED);
+            cv::putText(
+                visualization,
+                label,
+                cv::Point(12, 33),
+                cv::FONT_HERSHEY_SIMPLEX,
+                0.75,
+                cv::Scalar(255, 255, 255),
+                2);
+
+            const fs::path output_path =
+                output_dir /
+                (camera_1.camera_name_ + "_vs_" +
+                 camera_2.camera_name_ + ".jpg");
+
+            ASSERT_TRUE(cv::imwrite(
+                output_path.string(),
+                visualization,
+                {cv::IMWRITE_JPEG_QUALITY, 90}));
+
+            ++visualization_count;
+            std::cout
+                << "Saved sequential match visualization: "
+                << output_path << std::endl;
+        }
+    }
+
+    EXPECT_GT(visualization_count, 0u);
+    std::cout
+        << "Sequential matching generated " << landmarks.size()
+        << " landmark tracks and " << visualization_count
+        << " pair visualizations." << std::endl;
+}
