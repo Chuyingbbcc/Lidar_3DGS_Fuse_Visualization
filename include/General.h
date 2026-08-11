@@ -43,6 +43,8 @@ struct Config
     // Absolute cap on descriptor L2 distance for a match, applied alongside
     // the Lowe ratio test. Use -1 to disable (no absolute cap).
     double sift_max_match_distance_ = -1.0;
+    // Match each camera only with this many subsequent cameras in map order.
+    int sequential_match_window_size_ = 5;
 
     int num_iteration_ =20;
 

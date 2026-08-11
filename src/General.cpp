@@ -121,6 +121,11 @@ Config::Config(const std::string& yaml_path)
             sift_max_match_distance_ = get_double("sift_max_match_distance");
         }
 
+        if(config["sequential_match_window_size"]){
+            sequential_match_window_size_ =
+                get_int("sequential_match_window_size");
+        }
+
         num_iteration_ = get_int("num_iteration");
 
         if(config["max_images"]){
