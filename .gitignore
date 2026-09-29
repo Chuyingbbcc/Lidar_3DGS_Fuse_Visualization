@@ -3,6 +3,7 @@ build/
 3rd_party/
 data/
 *.png
+!docs/images/*.png
 *.pyc
 /output/*
 data_kitti_*/
