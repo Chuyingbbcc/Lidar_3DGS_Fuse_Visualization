@@ -1,14 +1,22 @@
 #include "MainWindow.h"
+#include "OpenGLWidget.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QFont>
+#include <QElapsedTimer>
 #include <QPalette>
 #include <QStyleFactory>
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QtGlobal>
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <numeric>
+#include <vector>
 
 int main(int argc, char* argv[])
 {
@@ -56,6 +64,14 @@ int main(int argc, char* argv[])
     QCommandLineOption demo_option(
         "demo", "Launch the preloaded, presentation-focused demo UI.");
     command_line.addOption(demo_option);
+    QCommandLineOption benchmark_load_option(
+        "benchmark-load",
+        "Load the demo and exit after its first rendered frame.");
+    command_line.addOption(benchmark_load_option);
+    QCommandLineOption benchmark_render_option(
+        "benchmark-render",
+        "Load the demo, benchmark continuous camera rotation, and exit.");
+    command_line.addOption(benchmark_render_option);
     QCommandLineOption lidar_option(
         "lidar", "Load a colored LiDAR PLY at startup.", "path");
     command_line.addOption(lidar_option);
@@ -171,9 +187,67 @@ int main(int argc, char* argv[])
     if (lidar_path.isEmpty() && !command_line.isSet(demo_option))
         lidar_path = QStringLiteral(PROJECT_ROOT_DIR) +
             "/data/kitti/merged_lidar_rgb.ply";
-    MainWindow window(command_line.isSet(demo_option), nullptr, lidar_path);
+    const bool benchmark_load = command_line.isSet(benchmark_load_option);
+    const bool benchmark_render = command_line.isSet(benchmark_render_option);
+    const bool demo_mode =
+        command_line.isSet(demo_option) || benchmark_load || benchmark_render;
+    MainWindow window(demo_mode, nullptr, lidar_path);
     window.show();
-    if (command_line.isSet(demo_option))
+    if (benchmark_load || benchmark_render) {
+        auto timer = std::make_shared<QElapsedTimer>();
+        auto loading_complete = std::make_shared<bool>(false);
+        auto frame_times = std::make_shared<std::vector<double>>();
+        auto frame_timer = std::make_shared<QElapsedTimer>();
+        auto warmup_frames = std::make_shared<int>(0);
+        OpenGLWidget* viewer = window.findChild<OpenGLWidget*>();
+        if (!viewer) return 1;
+        QObject::connect(viewer, &QOpenGLWidget::frameSwapped, &application,
+            [timer, frame_timer, frame_times, warmup_frames, loading_complete,
+             benchmark_render, viewer, &application]() {
+                if (!*loading_complete) return;
+                if (!benchmark_render) {
+                    qInfo("BENCHMARK demo_load_to_first_frame_ms=%lld",
+                          static_cast<long long>(timer->elapsed()));
+                    application.quit();
+                    return;
+                }
+                if (!frame_timer->isValid()) {
+                    qInfo("BENCHMARK demo_load_to_first_frame_ms=%lld",
+                          static_cast<long long>(timer->elapsed()));
+                    frame_timer->start();
+                } else {
+                    const double milliseconds = frame_timer->nsecsElapsed() / 1.0e6;
+                    frame_timer->restart();
+                    if (*warmup_frames >= 10) frame_times->push_back(milliseconds);
+                    else ++*warmup_frames;
+                }
+                if (frame_times->size() >= 120) {
+                    std::vector<double> sorted = *frame_times;
+                    std::sort(sorted.begin(), sorted.end());
+                    const double mean = std::accumulate(
+                        sorted.begin(), sorted.end(), 0.0) / sorted.size();
+                    const std::size_t p95_index = static_cast<std::size_t>(
+                        std::ceil(0.95 * sorted.size())) - 1;
+                    qInfo("BENCHMARK rotation_frames=%zu average_fps=%.3f mean_frame_ms=%.3f p95_frame_ms=%.3f",
+                          sorted.size(), 1000.0 / mean, mean, sorted[p95_index]);
+                    application.quit();
+                    return;
+                }
+                QMatrix4x4 transform;
+                const float angle = static_cast<float>(
+                    *warmup_frames + frame_times->size());
+                transform.rotate(angle, 0.0f, 1.0f, 0.0f);
+                viewer->setInteractionTransform(transform, angle, 0.0f);
+            });
+        QTimer::singleShot(0, &window,
+            [&window, viewer, timer, loading_complete]() {
+                timer->start();
+                window.loadDemoAssets();
+                *loading_complete = true;
+                viewer->update();
+            });
+    } else if (demo_mode) {
         QTimer::singleShot(0, &window, &MainWindow::loadDemoAssets);
+    }
     return application.exec();
 }

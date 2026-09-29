@@ -232,3 +232,122 @@ playback restores the path camera. Editing and overview retain the original
 Gaussian footprints, trim the sparse outer 0.25% with a 10 cm margin, and use
 a slightly lower ceiling cutoff to reduce spikes while preserving floor
 coverage. These display filters do not modify the PLY or path/cell data.
+
+## Performance evaluation
+
+The application is evaluated using rendering throughput, memory consumption,
+loading time, view-switch responsiveness, and route-planning latency. Results
+must be reported together with the scene size and test hardware; a timing value
+without its Gaussian, LiDAR, or walkable-cell workload is not directly
+comparable with another run.
+
+### Test environment
+
+| Item | Configuration |
+|---|---|
+| CPU | Intel Core i7-8650U, 4 cores / 8 threads |
+| GPU and VRAM | Intel UHD Graphics 620, 3 GiB reported shared graphics memory |
+| System RAM | 23 GiB |
+| Operating system | Ubuntu 20.04, Linux 5.15.0-139-generic |
+| GPU driver | Mesa 21.2.6, OpenGL 4.6 |
+| Build type | Release |
+| Window resolution | 1100 x 700 |
+| Repeated trials | 3 runs per test |
+
+### Rendering and resource usage
+
+| Scene | View | Gaussians / points | Average FPS | P95 frame time (ms) | Peak VRAM (MB) | Peak RAM (MB) | Load time (s) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Demo scene | 3DGS, continuous rotation | 1,814,073 | 7.60 | 154.04 | N/A (shared memory) | 1,952.5 | 3.761 |
+| Demo scene | Colored LiDAR | 3,495,219 | Not measured | Not measured | N/A (shared memory) | Not measured | Not measured |
+
+The 3DGS result is the mean of three Release-build runs. Each rendering run
+discarded 10 warm-up frames and measured 120 frames while rotating the view by
+one degree per frame. This intentionally exercises the CPU depth-ordering path;
+GPU-assisted splat reordering was disabled. The individual average-FPS results
+were 7.593, 7.617, and 7.600. Individual P95 frame times were 154.267,
+153.660, and 154.180 ms.
+
+Cold loading was measured independently over three process launches, from the
+start of demo loading through the first completed 3DGS frame. The individual
+results were 3.791, 3.779, and 3.713 seconds. Peak RAM is the mean process
+high-water mark from the three rendering runs. Because the Intel UHD 620 uses
+unified system memory, a reliable application-only VRAM value was not available
+and is not estimated in the table.
+
+Average FPS and frame time are collected during a fixed 30-second camera
+rotation after discarding the initial warm-up frames. If the recorded frame
+times are `t_i` milliseconds, the reported FPS is calculated from the mean
+frame time:
+
+```text
+average_frame_time = (1 / N) * sum(t_i)
+average_FPS = 1000 / average_frame_time
+```
+
+P95 frame time is the 95th percentile of the sorted frame-time samples. It is
+reported with average FPS because it exposes slow frames and interaction
+stutter that an average alone can hide. Gaussian and LiDAR counts come from the
+sizes of the loaded point containers.
+
+Scene loading is timed from the start of PLY reading until CPU preparation and
+the first GPU upload are complete and the representation is ready to render.
+3DGS and LiDAR loading are measured separately.
+
+Peak host memory is measured from the process's maximum resident set size. On
+Linux, launch the viewer with:
+
+```bash
+/usr/bin/time -v ./build/3dgs_cpp_qt_viewer --demo
+```
+
+After the run, convert `Maximum resident set size` from KiB to MiB by dividing
+by 1024. On an NVIDIA system, sample GPU memory while the same test is running:
+
+```bash
+watch -n 0.2 nvidia-smi
+```
+
+Record the highest memory value associated with the viewer. If the OpenGL
+process is not listed separately, report the increase from the idle GPU-memory
+baseline and identify it as an estimate.
+
+### Interaction and navigation latency
+
+| Operation | Workload | Trials | Average latency (ms) | P95 latency (ms) |
+|---|---|---:|---:|---:|
+| 3DGS to LiDAR warm switch | To be measured | 20 | To be measured | To be measured |
+| LiDAR to 3DGS warm switch | To be measured | 20 | To be measured | To be measured |
+| A* route planning | To be measured walkable cells | 20 | To be measured | To be measured |
+
+View-switch latency is measured from the view-change request to completion of
+the first frame rendered with the requested representation. Both point sets
+must already be loaded and cached; initial parsing and upload belong to the
+scene-loading measurement rather than the warm-switch result.
+
+A* latency is measured from the beginning of painted-cell processing until the
+final route has been reconstructed. It includes obstacle filtering, start-cell
+selection, reachability analysis, destination-cell selection, A* search, and
+route reconstruction. It excludes natural-language or API response time and
+robot playback. The report records the painted-cell count, safe-cell count,
+and final route-cell count for context.
+
+For each latency test, run the same operation 20 times and report its arithmetic
+mean and 95th percentile. Repeat the overall experiment three times under the
+same scene, window size, camera motion, and hardware conditions.
+
+The application provides two automated modes used for the measurements above:
+
+```bash
+cmake -S . -B build-app-benchmark -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=OFF -DLIO_VISUAL_BA_ENABLE_QT_VIEWER=ON
+cmake --build build-app-benchmark --target 3dgs_qt_viewer -j2
+./build-app-benchmark/3dgs_qt_viewer --benchmark-load
+./build-app-benchmark/3dgs_qt_viewer --benchmark-render
+```
+
+`--benchmark-load` exits after the first fully rendered demo frame.
+`--benchmark-render` additionally performs the warm-up and 120-frame rotation
+test, then prints average FPS, mean frame time, and P95 frame time. The LiDAR
+switching and A* rows remain unreported until their automated benchmark paths
+are implemented; no values are inferred from interactive observation.

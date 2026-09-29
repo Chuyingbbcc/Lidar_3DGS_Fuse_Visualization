@@ -26,6 +26,16 @@ find_package(yaml-cpp REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter)
 
+# Ceres 2.x exports the namespaced Ceres::ceres target, while older releases
+# such as Ubuntu 20.04's Ceres 1.14 export the target as plain `ceres`.
+if(TARGET Ceres::ceres)
+    set(LIO_VISUAL_BA_CERES_TARGET Ceres::ceres)
+elseif(TARGET ceres)
+    set(LIO_VISUAL_BA_CERES_TARGET ceres)
+else()
+    message(FATAL_ERROR "Ceres was found, but it did not export a supported CMake target")
+endif()
+
 option(LIO_VISUAL_BA_ENABLE_QT_VIEWER "Build the optional Qt/OpenGL viewer" OFF)
 if(LIO_VISUAL_BA_ENABLE_QT_VIEWER)
     find_package(TBB REQUIRED)
@@ -102,14 +112,13 @@ target_include_directories(
     SYSTEM
     INTERFACE
         ${OpenCV_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/3rd_party/sophus
 )
 target_link_libraries(
     lio_visual_ba_dependencies
     INTERFACE
         Eigen3::Eigen
         ${OpenCV_LIBS}
-        Ceres::ceres
+        ${LIO_VISUAL_BA_CERES_TARGET}
         nlohmann_json::nlohmann_json
         yaml-cpp
         Threads::Threads

@@ -85,8 +85,9 @@ bool TrajectoryProcessing::loadOptimizedCameraPoses(const std::string& path)
         pose.camera_id = camera_id;
         pose.image_name = image_name;
         // COLMAP stores p_c = R_cw * p_w + t_cw.
-        pose.T_cw = SE3d(SO3d(quaternion), translation);
-        pose.position_world = pose.T_cw.inverse().translation();
+        pose.rotation_cw = quaternion;
+        pose.translation_cw = translation;
+        pose.position_world = -(quaternion.conjugate() * translation);
         poses_.push_back(std::move(pose));
     }
 

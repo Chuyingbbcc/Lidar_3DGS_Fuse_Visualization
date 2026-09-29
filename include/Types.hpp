@@ -171,7 +171,8 @@ struct Landmark
     // Immutable triangulation result used by repeated BA landmark priors.
     Eigen::Vector3d initial_position_world = Eigen::Vector3d::Zero();
     bool has_initial_position = false;
-    Eigen::Vector3<std::uint8_t> color_rgb = Eigen::Vector3<std::uint8_t>::Zero();
+    Eigen::Matrix<std::uint8_t, 3, 1> color_rgb =
+        Eigen::Matrix<std::uint8_t, 3, 1>::Zero();
     std::vector<FeatureObservation> observations;
     LandmarkQuality quality;
 };

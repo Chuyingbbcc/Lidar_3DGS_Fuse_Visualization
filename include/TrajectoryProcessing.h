@@ -1,20 +1,25 @@
 #pragma once
 
-#include "DataType.h"
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 
 #include <limits>
 #include <string>
 #include <vector>
 
-// One record from COLMAP's images.txt-style optimized camera output. T_cw
-// maps world points into the camera; position_world is the translation of its
-// inverse and is therefore the camera center in world coordinates.
+using Vec3d = Eigen::Vector3d;
+using Mat4d = Eigen::Matrix4d;
+
+// One record from COLMAP's images.txt-style optimized camera output. The
+// rotation_cw/translation_cw pair maps world points into the camera, while
+// position_world is the camera center in world coordinates.
 struct OptimizedCameraPose
 {
     int image_id = -1;
     int camera_id = -1;
     std::string image_name;
-    SE3d T_cw;
+    Eigen::Quaterniond rotation_cw = Eigen::Quaterniond::Identity();
+    Vec3d translation_cw = Vec3d::Zero();
     Vec3d position_world = Vec3d::Zero();
 };
 

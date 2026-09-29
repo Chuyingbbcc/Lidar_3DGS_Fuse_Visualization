@@ -465,7 +465,13 @@ Optimizer::OptimizeCamerasAndLandmarks(Reconstruction& reconstruction,
     ceres::Problem problem;
     for (CameraParameters& camera : camera_parameters)
     {
+#if CERES_VERSION_MAJOR >= 2
         problem.AddParameterBlock(camera.quaternion, 4, new ceres::EigenQuaternionManifold());
+#else
+        problem.AddParameterBlock(camera.quaternion, 4);
+        problem.SetParameterization(
+            camera.quaternion, new ceres::EigenQuaternionParameterization());
+#endif
         problem.AddParameterBlock(camera.translation, 3);
         if ((anchor.valid() && camera.id == anchor) || constant_cameras.count(camera.id) != 0)
         {

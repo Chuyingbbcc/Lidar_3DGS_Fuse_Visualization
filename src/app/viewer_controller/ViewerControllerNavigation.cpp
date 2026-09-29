@@ -473,18 +473,25 @@ bool ViewerController::planThroughWalkableCells(
 
 void ViewerController::planNavigationRequest(const QString& request)
 {
+    //----------------------------------Clear the previous request--------------------------//
     viewer_->clearNavigationPlan();
     has_navigation_target_ = false;
     // A new command must not leave the previous object highlighted if relation
     // resolution or route planning fails.
     selectSemanticObject(-1);
     restoreNavigationView();
+
+
+    //----------------------------------Parse and validate the command------------------------//
     const ParsedNavigationCommand command = navigation_intent_parser_.parse(request);
     if (!command.isValid() || command.intent != NavigationIntent::NavigateTo) {
         emit navigationPlanStatusChanged(command.error.isEmpty()
             ? "Please enter a destination command." : command.error);
         return;
     }
+
+
+    //----------------------------------Verify that planning data exists------------------------//
     const bool has_closed_free_zone =
         free_zone_closed_ && free_zone_vertices_.size() >= 3;
     if (walkable_cells_.empty() && !has_closed_free_zone &&
@@ -492,6 +499,9 @@ void ViewerController::planNavigationRequest(const QString& request)
         emit navigationPlanStatusChanged("Load a robot path or walkable-cell map first.");
         return;
     }
+
+
+    //----------------------------------Select the starting position------------------------//
     // Validate the requested start before any planner can snap it to a route.
     if (navigation_has_started_ || !navigation_path_world_.empty() ||
         has_free_zone_default_start_) {
@@ -499,6 +509,7 @@ void ViewerController::planNavigationRequest(const QString& request)
             ? robot_path_player_->currentWorldPosition()
             : (!navigation_path_world_.empty() ? navigation_path_world_.front()
                                                : free_zone_default_start_world_);
+        //The start is converted from world coordinates to aligned coordinates and checked against the scene
         if (!viewer_->isAlignedPositionInsideScene(
                 viewer_->sceneWorldToAlignedTransform().map(start_world))) {
             emit navigationPlanStatusChanged(
@@ -506,6 +517,9 @@ void ViewerController::planNavigationRequest(const QString& request)
             return;
         }
     }
+
+
+    //----------------------------------Resolve the semantic class------------------------//
     QStringList classes;
     for (const SemanticObject& object : semantic_objects_)
         if (!classes.contains(object.name)) classes.append(object.name);
@@ -561,6 +575,8 @@ void ViewerController::planNavigationRequest(const QString& request)
     // Resolve duplicate detections before considering route length. Otherwise
     // a weak duplicate near the robot can beat the well-supported instance and
     // create a zero-length route (notably for the TVs near the mug area).
+
+    //------------------------------Resolve duplicate detections----------------------------------//
     double best_semantic_quality = -std::numeric_limits<double>::infinity();
     for (const SemanticObject& object : semantic_objects_) {
         if (object.name.compare(canonical, Qt::CaseInsensitive) != 0 ||
@@ -576,17 +592,26 @@ void ViewerController::planNavigationRequest(const QString& request)
             preferred_navigation_object_id_ = object.id;
         }
     }
+
+//---------------------------------------Choose the planner------------------------//
     if (!walkable_cells_.empty() &&
         planThroughWalkableCells(canonical, command.destination)) return;
     if (navigation_path_world_.size() < 2 && has_closed_free_zone &&
         planThroughFreeZone(canonical, command.destination)) return;
 
+
+
+   //--------------------------------Build cumulative path distance--------------------------//
     const auto& path = navigation_path_world_;
     std::vector<float> cumulative(path.size(), 0.0f);
     for (std::size_t i = 1; i < path.size(); ++i)
         cumulative[i] = cumulative[i - 1] + (path[i] - path[i - 1]).length();
     struct Projection { int segment = -1; float amount = 0.0f;
                         float arc = 0.0f; float offset = 0.0f; QVector3D point; };
+
+
+    // The local project_to_path() lambda examines every segment and finds the closest projected point.
+
     const auto project_to_path = [&](const QVector3D& position) {
         Projection best_projection;
         best_projection.offset = std::numeric_limits<float>::max();
@@ -716,6 +741,9 @@ void ViewerController::planNavigationRequest(const QString& request)
     const QVector3D object_center_world = best.object->position_world;
     navigation_target_center_aligned_ = transform.map(object_center_world);
     has_navigation_target_ = true;
+
+
+   //--------------------------------Display and execute the route------------------------//
     viewer_->setNavigationPlan(route_aligned, navigation_target_center_aligned_,
         QString("%1 #%2").arg(best.object->name).arg(best.object->id));
     selectSemanticObject(best.object->id);
@@ -726,6 +754,8 @@ void ViewerController::planNavigationRequest(const QString& request)
             robot_path_player_->lastError());
         return;
     }
+
+   //----------------------------------Start navigation---------------------------//
     setPathEditingEnabled(false);
     constrained_z_up_navigation_ = true;
     viewer_->setZUpGizmo(true);
