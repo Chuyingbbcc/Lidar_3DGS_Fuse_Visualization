@@ -48,7 +48,7 @@ The colored point cloud exposes the measured scene structure. Switching represen
 
 | exploration | navigation |
 |:---:|:---:|
-| <a href="https://youtu.be/1UWj5hDzwCo"><img src="https://img.youtube.com/vi/1UWj5hDzwCo/hqdefault.jpg" alt="Exploration video" width="240"></a> | <a href="https://youtu.be/s6WtcD9oFgs"><img src="https://img.youtube.com/vi/s6WtcD9oFgs/hqdefault.jpg" alt="Navigation video" width="240"></a> |
+| <a href="https://youtu.be/1UWj5hDzwCo"><img src="https://img.youtube.com/vi/1UWj5hDzwCo/hqdefault.jpg" alt="Exploration video" width="360"></a> | <a href="https://youtu.be/s6WtcD9oFgs"><img src="https://img.youtube.com/vi/s6WtcD9oFgs/hqdefault.jpg" alt="Navigation video" width="360"></a> |
 | [exploration](https://youtu.be/1UWj5hDzwCo) | [navigation](https://youtu.be/s6WtcD9oFgs) |
 
 ## Key features
