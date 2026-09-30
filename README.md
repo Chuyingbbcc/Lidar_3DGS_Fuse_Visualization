@@ -63,29 +63,27 @@ The colored point cloud exposes the measured scene structure. Switching represen
 
 ### LiDAR-supported 3DGS preparation
 
-- Initialize a downstream Gaussian scene from a registered RGB LiDAR cloud using the [LiDAR dataset preparation tool](tools/lidar_init_3dgs_dataset.py).
-- Generate metric depth maps, validity masks, and confidence maps for downstream depth supervision using the depth preparation scripts.
-- Load the trained Gaussian PLY in the viewer. Gaussian training runs outside the C++ application; its loss configuration and training environment must be supplied separately.
+- **Gaussian initialization:** prepare a registered RGB LiDAR cloud as the initial point set for downstream 3DGS training.
+- **Depth supervision:** generate metric depth maps, validity masks, and confidence maps to support geometry constraints during training.
+- **Trained scene loading:** open the resulting Gaussian PLY in the viewer. Training runs separately with its own environment and loss configuration.
 
 ### Semantic scene understanding
 
-The project workflow uses Qwen-VL-derived object descriptions and labels to associate semantic observations with locations in the reconstructed world. The app consumes a prepared semantic database containing object classes, descriptions, confidence, review status, and approximate 3D bounds.
-
-- Display labels and projected boxes in the Gaussian and colored LiDAR views.
-- Review objects as **Confirmed**, **Unsure**, or **Incorrect**.
-- Select objects directly in the viewport without moving the camera.
-- Plan routes to confirmed objects using class names, aliases, description keywords, and supported spatial relations.
-
-Semantic extraction and 3D association are upstream preparation steps; the viewer uses the resulting database for inspection and navigation.
+- **Semantic mapping:** associate Qwen-VL-derived labels and descriptions with 3D locations during scene preparation.
+- **Object database:** load prepared object classes, descriptions, confidence, review status, and approximate 3D bounds.
+- **Semantic overlays:** display object labels and projected bounding boxes in both Gaussian and colored LiDAR views.
+- **Object inspection:** select objects directly in the viewport without moving the camera.
+- **Object review:** mark objects as **Confirmed**, **Unsure**, or **Incorrect**.
+- **Semantic destinations:** find confirmed targets by class, alias, description keywords, and supported spatial relations.
 
 ### Qt / OpenGL navigation app
 
-- Custom Gaussian rendering with anisotropic splats, spherical-harmonic color, opacity, depth sorting, and alpha blending.
-- Perspective exploration and top-down orthographic path editing.
-- Cached switching between 3DGS and colored LiDAR.
-- Editable floor-aligned walkable cells and A* route planning with obstacle and clearance constraints.
-- Distance-based route playback with look-ahead heading and smoothed rotation.
-- A minimap showing the route, robot position, heading, walkable regions, and destination.
+- **Gaussian rendering:** draw anisotropic splats with spherical-harmonic color, opacity, depth sorting, and alpha blending.
+- **Scene exploration:** inspect the scene in perspective and edit paths in a top-down orthographic view.
+- **View switching:** switch between cached 3DGS and colored LiDAR scenes while preserving the camera viewpoint.
+- **Route planning:** edit floor-aligned walkable cells and plan A* routes with obstacle and clearance constraints.
+- **Robot playback:** follow routes using distance-based interpolation, look-ahead heading, and smoothed rotation.
+- **Navigation minimap:** track the route, robot position, heading, walkable regions, and destination.
 
 ## System architecture
 
@@ -97,143 +95,50 @@ The two C++ entry points are `lio_visual_ba_pipeline` for reconstruction and `3d
 
 ## Technical details
 
-### Detection, matching, and tracking
+The system first reconstructs a metric scene from images and LiDAR pose priors. Prepared Gaussian and semantic assets then support rendering and navigation in the app.
 
 ```text
-image -> grayscale SIFT -> grid supplementation -> descriptors
-     -> BFMatcher ratio test -> pose/RANSAC geometry -> verified pairs
-     -> DSU unions with camera-conflict rejection -> feature tracks
+Images + LiDAR pose priors
+  → feature detection and matching → multi-view tracks
+  → triangulation → bundle adjustment → validated reconstruction
+  → external 3DGS training and semantic preparation
+  → scene rendering → route planning and playback
 ```
 
-- **Detection:** SIFT is used as the primary detector for robust and distinctive keypoints. The image is divided into a spatial grid, and regions with insufficient SIFT coverage are supplemented with Shi–Tomasi corner features. SIFT descriptors are then computed for all keypoints, maintaining a consistent representation for downstream matching. This approach improves feature coverage and reduces clustering in highly textured regions, providing more evenly distributed geometric constraints for matching, pose estimation, and bundle adjustment. The supplemental Shi–Tomasi features can also support future KLT optical-flow tracking, enabling efficient frame-to-frame tracking for visual odometry and SLAM.
+### 1. Feature detection, matching, and tracking
 
-- **Matching:** Matching starts with SIFT descriptor rows from two different
-  cameras. OpenCV `BFMatcher(NORM_L2)` retrieves the two closest candidates for
-  each descriptor. Lowe's ratio test keeps a match only when its best distance
-  is sufficiently separated from the second-best distance, removing ambiguous
-  texture. Optional mutual matching performs the same search in the reverse
-  direction and keeps only consistent correspondences. The result is a set of
-  descriptor candidates, not yet a geometric match set.
+**Goal:** identify the same scene point across several images so its 3D position can be estimated.
 
-  When calibrated camera poses are available, each candidate is tested against
-  the fundamental matrix implied by the camera intrinsics and relative pose.
-  The pixel Sampson error measures how far the correspondence is from its
-  epipolar line; candidates beyond the configured gate are rejected. This path
-  uses the LIO or optimized pose as a geometric prior and is efficient for
-  temporal or recovery matching.
+#### Detect features across the image
 
-  For pairs without a trusted pose prior, the candidate pixels are passed to
-  OpenCV `USAC_MAGSAC`. RANSAC hypotheses estimate a fundamental matrix while
-  rejecting outliers, and the surviving inliers are re-evaluated with Sampson
-  error. A pair is accepted only when it has enough inliers, a sufficient
-  inlier ratio, and inliers distributed across both image planes. The spatial
-  coverage test prevents a small, repeated texture patch from passing geometry
-  despite producing a numerically valid model. Accepted correspondences carry
-  their feature IDs, descriptor distance, and geometric error into pair-cache
-  storage and track construction.
+- **Primary features:** SIFT detects distinctive keypoints and describes their local appearance.
+- **Coverage:** the image is divided into a grid. Cells with too few SIFT keypoints receive supplemental Shi–Tomasi corners, reducing concentration in highly textured areas.
+- **Consistent descriptors:** SIFT descriptors are computed for all keypoints, including supplemental corners, so the same matcher can process them.
 
-- **Pair selection/cache:** Temporal and pose-based loop candidates are created
-  before matching. Feature and pair results use fingerprinted, checksummed
-  binary caches; changed image data, feature data, or matching configuration
-  invalidates reuse.
+The supplemental corners could also support KLT optical-flow tracking in future work; the current pipeline builds tracks from verified descriptor matches.
 
-- **Tracking:** Each feature becomes a node keyed by
-  `(camera_id, feature_id)`; each verified match is a graph edge. A disjoint-set
-  union builds connected components while storing the camera IDs in each
-  component:
+#### Match appearance, then verify geometry
 
-  - disjoint camera sets: merge the components;
-  - same root: ignore the redundant edge;
-  - overlapping camera sets: reject the edge as a conflict.
+Temporal neighbors and candidates selected from nearby poses are chosen before matching. Each selected pair passes through two checks:
 
-  The conflict rule guarantees at most one feature observation per camera in a
-  track, so later triangulation has an unambiguous correspondence. The current
-  implementation is greedy: the first compatible edge in match order wins and
-  a later conflicting edge is rejected. After processing, short components are
-  discarded, observations and tracks receive stable camera/feature ordering,
-  and a track is marked supplemental if any observation came from the grid
-  supplementation stage. Accepted, redundant, and rejected edge counts are
-  retained for diagnostics.
+| Check | Method | Why it matters |
+|---|---|---|
+| Appearance | `BFMatcher(NORM_L2)` finds the two closest descriptors; Lowe's ratio test rejects ambiguous matches | Similar textures can otherwise produce incorrect correspondences |
+| Mutual consistency, when enabled | Match in both directions and retain consistent pairs | Removes one-way associations |
+| Geometry with pose priors | Derive the fundamental matrix from camera calibration and relative pose; apply a Sampson-error gate | Tests whether a match agrees with the known camera geometry |
+| Geometry without trusted poses | Estimate the fundamental matrix with `USAC_MAGSAC`, then recheck inliers using Sampson error | Estimates geometry while rejecting outliers |
+| Pair acceptance | Require enough inliers, a sufficient inlier ratio, and coverage across both images | Prevents a small repeated-texture patch from dominating the pair |
 
-### Mapping and optimization
-
-The post-tracking pipeline has four controlled stages:
-
-```text
-tracks -> triangulation/filtering -> sparse landmarks
-    -> local/global BA -> cleanup/recovery -> final reconstruction
-```
-
-#### 1. Landmark construction
-
-Each conflict-free track is converted into one world-space landmark. The
-multi-view triangulator solves a linear DLT system from all camera observations,
-then applies depth, parallax, and reprojection checks independently in every
-observing camera:
-
-```text
-track observations -> DLT point X -> depth/cheirality
-          -> parallax -> reprojection -> accept/reject
-```
-
-For a camera-to-world pose $T_{wc}=(R_i,C_i)$ and world point $X_j$, the projected
-camera point is
-
-$$
-X_{ij}=R_i^{T}(X_j-C_i),
-\qquad
-\hat u_{ij}=\begin{bmatrix}
-f_x X_{ij,x}/X_{ij,z}+c_x\\
-f_y X_{ij,y}/X_{ij,z}+c_y
-\end{bmatrix}.
-$$
-
-The observation residual is $r_{ij}=\hat u_{ij}-u_{ij}$. A candidate is
-rejected if DLT is numerically unstable, any depth is non-positive, parallax is
-insufficient, or the reprojection residual exceeds the configured gate. When
-observation pruning is enabled, the point is fitted once, high-residual
-observations are removed, and DLT is run again. The mapper records short-track,
-geometric, numerical, and pruned-observation counts separately.
-
-The geometric tests use the following quantities. For an image observation
-$x_i=[u_i,v_i,1]^T$ and a camera projection matrix $P_i$, DLT constructs two
-linear equations per view:
-
-$$
-\begin{bmatrix}
-u_iP_{i,3}-P_{i,1}\\
-v_iP_{i,3}-P_{i,2}
-\end{bmatrix}X=0,
-$$
-
-where the right singular vector associated with the smallest singular value is
-the homogeneous landmark estimate $X$. The singular-value check rejects
-ill-conditioned configurations and points whose homogeneous scale is close to
-zero. For two unit viewing rays $a$ and $b$, their parallax angle is
-
-$$
-\theta=\cos^{-1}\!\left(\operatorname{clamp}(a^Tb,-1,1)\right).
-$$
-
-The maximum angle across observing-camera pairs is retained as the track parallax.
-Positive camera depth enforces cheirality. The pixel quality measures are
-
-$$
-e_{ij}=\lVert\hat u_{ij}-u_{ij}\rVert_2,
-\qquad
-\operatorname{RMSE}=\sqrt{\frac{1}{N}\sum_{ij}e_{ij}^{2}},
-$$
-
-with median and maximum errors retained for landmark quality and cleanup.
-
-The same epipolar model used during matching can be written as
+The **fundamental matrix** $F$ relates a point in one image to its expected epipolar line in the other:
 
 $$
 \ell_2=Fx_1,\qquad \ell_1=F^Tx_2,
+\qquad F=K_2^{-T}[t]_{\times}RK_1^{-1}.
 $$
 
-where $F=K_2^{-T}EK_1^{-1}$ and $E=[t]_{\times}R$. The implemented pixel
-Sampson error is the first-order approximation
+Here, $x_1$ and $x_2$ are homogeneous pixel coordinates, $K_1$ and $K_2$ are camera intrinsics, and $R,t$ describe the relative camera pose. The matrix $[t]_{\times}$ represents the cross product with $t$.
+
+The implemented **Sampson error** approximates geometric mismatch in pixels:
 
 $$
 e_{\mathrm{S}}(x_1,x_2)=
@@ -241,15 +146,88 @@ e_{\mathrm{S}}(x_1,x_2)=
 {\sqrt{\ell_{2,1}^{2}+\ell_{2,2}^{2}+\ell_{1,1}^{2}+\ell_{1,2}^{2}}}.
 $$
 
-This is why a correspondence can pass descriptor matching but still be removed
-before tracking: its appearance similarity is acceptable, while its geometric
-error is not.
+A small value means the correspondence agrees with the estimated geometry. A match can look similar and still fail this check.
 
-#### 2. Bundle-adjustment objective
+#### Join verified matches into tracks
 
-Bundle adjustment refines camera poses and landmark positions simultaneously.
-The Ceres problem minimizes a robust reprojection objective with LIO pose
-priors:
+A **track** collects observations of one candidate scene point across images. Each observation is keyed by `(camera_id, feature_id)`. A disjoint-set union (DSU) joins observations connected by verified matches:
+
+| Relationship between two groups | Action |
+|---|---|
+| No camera appears in both groups | Merge the groups |
+| Both observations already belong to the same group | Ignore the redundant match |
+| A camera appears in both groups | Reject the conflicting match |
+
+This rule allows at most one observation per camera in each track. Merging is greedy: the first compatible match wins, and later conflicts are rejected. Short tracks are discarded, and retained tracks receive stable camera/feature ordering. A track is marked supplemental if any observation came from grid supplementation.
+
+**Caching and diagnostics:** accepted matches retain feature IDs, descriptor distances, and geometric errors. Feature and pair caches use fingerprints and checksums; changes to their inputs or configuration invalidate reuse. Accepted, redundant, and conflicting match counts are recorded for inspection.
+
+### 2. Triangulation and landmark filtering
+
+**Goal:** turn each valid track into a 3D landmark and reject unreliable geometry.
+
+#### Estimate a 3D point from multiple views
+
+The direct linear transform (DLT) combines the observations in a track into a linear system. For pixel coordinates $(u_i,v_i)$ and camera projection matrix $P_i$, each view contributes:
+
+$$
+\begin{bmatrix}
+u_iP_{i,3}-P_{i,1}\\
+v_iP_{i,3}-P_{i,2}
+\end{bmatrix}X=0.
+$$
+
+$P_{i,k}$ denotes row $k$ of the projection matrix. The right singular vector associated with the smallest singular value gives the homogeneous point estimate $X$. Numerical checks reject unstable configurations and points with a homogeneous scale close to zero.
+
+#### Check the estimate against every observation
+
+For camera-to-world rotation $R_i$, camera center $C_i$, and world landmark $X_j$, the point in camera coordinates and its predicted pixel are:
+
+$$
+X_{ij}=R_i^T(X_j-C_i),
+\qquad
+\hat u_{ij}=\begin{bmatrix}
+f_xX_{ij,x}/X_{ij,z}+c_x\\
+f_yX_{ij,y}/X_{ij,z}+c_y
+\end{bmatrix}.
+$$
+
+$f_x,f_y$ are focal lengths in pixels, and $c_x,c_y$ define the principal point. Comparing $\hat u_{ij}$ with the observed pixel $u_{ij}$ shows how well the 3D estimate explains the images.
+
+| Quality check | Meaning | Rejection condition |
+|---|---|---|
+| Numerical stability | The views support a usable DLT solution | Unstable solution or near-zero homogeneous scale |
+| Cheirality | The point lies in front of its observing cameras | Non-positive camera depth |
+| Parallax | Viewing rays have enough angular separation to constrain depth | Insufficient maximum ray angle |
+| Reprojection | The estimated point projects close to the observed features | Pixel errors exceed the configured quality gates |
+
+For unit viewing rays $a$ and $b$, their parallax angle is:
+
+$$
+\theta=\cos^{-1}\!\left(\mathrm{clamp}(a^Tb,-1,1)\right).
+$$
+
+The largest angle across observing-camera pairs is retained as track parallax. Nearly parallel rays provide weak depth constraints.
+
+The reprojection residual, pixel error, and root mean square error are:
+
+$$
+r_{ij}=\hat u_{ij}-u_{ij},\qquad
+e_{ij}=\lVert r_{ij}\rVert_2,\qquad
+\mathrm{RMSE}=\sqrt{\frac{1}{N}\sum_{ij}e_{ij}^{2}}.
+$$
+
+$N$ is the number of evaluated observations. Median and maximum errors are also retained for quality checks and cleanup.
+
+**Observation pruning:** when enabled, the mapper fits a point, removes observations with high residuals, and triangulates again. It records short-track rejections, geometric failures, numerical failures, and pruned observations separately.
+
+### 3. Bundle adjustment
+
+**Goal:** jointly refine camera poses and landmark positions while keeping the reconstruction consistent with the metric LiDAR/LIO trajectory.
+
+#### Balance image evidence with geometric priors
+
+Ceres minimizes three groups of residuals:
 
 $$
 \min_{R_i,C_i,X_j}
@@ -258,118 +236,133 @@ $$
 +\sum_{j\in\mathcal P}\rho_X\left(\|(X_j-X_j^0)/\sigma_j\|^2\right).
 $$
 
-The first term connects each landmark to its observed pixels. The second keeps
-optimized camera motion near the metric LIO trajectory. The third stabilizes
-landmarks around their triangulated positions when an initial position exists.
-$\mathcal P$ contains landmarks with an initial position, and $\sigma_j$ scales each landmark prior. Camera intrinsics remain fixed.
-Camera rotations use a quaternion manifold; anchor and constant cameras are
-held fixed. Reprojection uses a Cauchy loss, while pose and landmark priors use
-Huber losses. Invalid-depth observations are skipped, and the candidate result
-is copied back only when Ceres reports a usable solution.
+| Term | What it constrains | Robust loss |
+|---|---|---|
+| Reprojection $r_{ij}$ | Predicted landmark pixels should agree with measured image features | Cauchy |
+| Pose prior $r_i^{\mathrm{LIO}}$ | Camera poses should remain near their metric LIO initialization | Huber |
+| Landmark prior $(X_j-X_j^0)/\sigma_j$ | Eligible landmarks should remain near their initial triangulated positions | Huber |
 
-For a pose prior $(q_i^0,C_i^0)$, with unit quaternions $q_i^0$ and $q_i$ representing the prior and current camera-to-world rotations, the implemented prior residual is scaled as
+$\mathcal P$ contains landmarks with an initial position $X_j^0$. The scale $\sigma_j$ controls the strength of each landmark prior. Camera intrinsics remain fixed.
+
+For prior camera center $C_i^0$ and prior rotation quaternion $q_i^0$, the pose residual is:
 
 $$
 r_i^{\mathrm{LIO}}=
 \begin{bmatrix}
 (C_i-C_i^0)/\sigma_t\\
-2\,\operatorname{vec}\!\left((q_i^0)^{-1}q_i\right)/\sigma_r
-\end{bmatrix},
+2\,\mathrm{vec}\!\left((q_i^0)^{-1}q_i\right)/\sigma_r
+\end{bmatrix}.
 $$
 
-using the vector part of the relative quaternion for the local rotation error.
-The robust loss limits the influence of mismatched observations:
+The first three components measure translation change. The last three use the vector part of the relative unit quaternion to approximate local rotation change. The scales $\sigma_t$ and $\sigma_r$ control how strongly translation and rotation are constrained.
+
+#### Reduce the influence of outliers
+
+Robust losses reduce the influence of large residuals that might otherwise pull the solution toward incorrect observations:
 
 $$
 \rho_{\mathrm{Cauchy}}(s)=c^2\log\!\left(1+\frac{s}{c^2}\right),
 \qquad
 \rho_{\mathrm{Huber}}(s)=
-\begin{cases}s,&s\leq c^2\\2c\sqrt{s}-c^2,&s>c^2.\end{cases}
+\begin{cases}
+s,&s\leq c^2\\
+2c\sqrt{s}-c^2,&s>c^2.
+\end{cases}
 $$
 
-Here $s$ is a squared residual norm. Reprojection uses the Cauchy loss;
-trajectory and landmark priors use Huber losses.
+$s$ is a squared residual norm, and $c$ is the loss scale. The solver maintains valid unit quaternions through a quaternion manifold, keeps designated anchor and constant cameras fixed, and skips observations with invalid depth. A candidate solution is copied back only when Ceres reports that it is usable.
 
-#### 3. Local versus global BA
+#### Refine locally, then globally
 
-The two BA modes use the same residuals and solver, but optimize different
-parameter sets:
+| Mode | Parameters refined | Purpose |
+|---|---|---|
+| Local BA | A temporal window ending at the newest camera and the landmarks it observes | Incorporate recent observations with bounded computation |
+| Global BA | The registered camera prefix and all eligible landmarks, subject to fixed-camera constraints | Refine consistency across the accumulated reconstruction |
 
-- **Local BA:** the newest camera is the seed. A temporal window ending at that
-  camera is selected, and landmarks observed by the window are included. The
-  window cameras and their landmarks are variable; cameras outside the window
-  remain fixed but continue contributing boundary observations. This limits
-  computation and lets newly added cameras adapt without moving the whole map.
+During local BA, cameras outside the window remain fixed but still contribute observations of shared landmarks. This connects the local solution to the surrounding map.
 
-- **Global BA:** the currently registered camera prefix and all eligible
-  landmarks are optimized together. The anchor, constant cameras, and LIO pose
-  priors keep the reconstruction metrically constrained while global landmark
-  and camera drift is corrected.
+**Schedule:** cameras are registered in temporal order. Local BA follows registration, global BA runs at configured checkpoints, and a final global solve runs when needed. Each solve reports camera and landmark counts, residual count, iterations, and initial/final reprojection RMSE.
 
-- **Incremental schedule:** cameras are processed in temporal order. Local BA
-  runs after a camera is registered, periodic global BA runs at configured
-  checkpoints, and a final global BA runs after the last camera when needed.
-  Each solve reports optimized camera/landmark counts, residual count,
-  iterations, and initial/final reprojection RMSE.
+### 4. Cleanup, recovery, and validation
 
-#### 4. Cleanup and recovery
+**Goal:** retain well-supported landmarks, improve weak frames, and verify the exported reconstruction.
 
-After each optimization phase, observations above the reprojection threshold
-are removed. Landmarks that no longer have enough observations are deleted.
-Weak-camera recovery then uses landmark-to-image correspondences with robust
-PnP; only PnP inliers are added, followed by another BA and cleanup pass.
+1. **Clean observations:** remove observations above the reprojection threshold and delete landmarks with too few remaining observations.
+2. **Recover weak cameras:** use robust perspective-n-point (PnP) estimation to recover camera poses from known 3D landmarks and matched image features. Add only PnP inliers, then repeat BA and cleanup.
+3. **Extend tracks when enabled:** project existing landmarks into weak frames and check image bounds, descriptor distance, ratio consistency, and epipolar error. A target feature can belong to only one landmark. Retriangulate accepted observations and keep them only if the final reprojection check passes.
+4. **Export and validate:** write trajectories, sparse PLY, tracks, observations, metrics, and COLMAP text files. Reopen the outputs to check counts, references, finite geometry, quaternion normalization, reprojection thresholds, and required files.
 
-Optional landmark extension projects existing points into weak frames and
-checks image bounds, descriptor distance, ratio consistency, and epipolar
-error. Target features cannot be assigned to multiple landmarks. Accepted
-observations are retriangulated and retained only if the final reprojection
-test succeeds.
+### 5. LiDAR initialization and depth supervision
 
-### Export and validation
+**Goal:** use measured LiDAR geometry to support downstream Gaussian reconstruction.
 
-Export writes trajectories, sparse PLY, tracks, observations, metrics, and
-strict COLMAP text files for downstream reconstruction consumers. Validation independently
-reopens generated artifacts and checks counts, references, finite geometry,
-quaternion normalization, reprojection thresholds, and required files.
+- **Initialization:** a registered RGB LiDAR cloud can provide the initial 3DGS point set. Preparation removes isolated outliers and points far from the camera trajectory.
+- **Depth preparation:** project LiDAR geometry into camera views and generate metric depth maps, validity masks, and confidence maps.
+- **Training:** a compatible external trainer can use these artifacts to constrain Gaussian geometry. The exact depth loss and its weight depend on the trainer.
 
-### LiDAR initialization and depth supervision
+### 6. Gaussian rendering
 
-A registered RGB LiDAR cloud can replace sparse visual landmarks as the initial point set for downstream 3DGS. Preparation filters points far from the camera trajectory and isolated outliers. Separate utilities project LiDAR geometry into camera views and package metric depth, masks, and confidence maps. A compatible trainer can use these artifacts to constrain geometry during optimization; the exact depth loss and weight depend on that trainer.
+**Goal:** turn a trained Gaussian scene into a view-dependent image.
 
-### Gaussian rendering
+```text
+3D Gaussian → projected ellipse → instanced quad
+            → spherical-harmonic color → alpha compositing
+```
 
-Each Gaussian stores a position, anisotropic scale, rotation, opacity, and spherical-harmonic coefficients. Its covariance is projected into screen space:
+Each Gaussian stores its position, scale, rotation, opacity, and spherical-harmonic (SH) coefficients. Its scale and rotation define a 3D covariance, which is projected into screen space:
 
 $$
 \Sigma_{3D}=RSS^TR^T,\qquad
 \Sigma_{2D}=JW\Sigma_{3D}W^TJ^T.
 $$
 
-$R$ is the Gaussian rotation, $S$ its diagonal scale matrix, $W$ the rotational part of the world-to-camera transform, and $J$ the perspective-projection Jacobian. The projected covariance defines an elliptical footprint:
+| Symbol | Meaning |
+|---|---|
+| $R$ | Gaussian rotation |
+| $S$ | Diagonal matrix of Gaussian scales |
+| $W$ | Rotational part of the world-to-camera transform |
+| $J$ | Perspective-projection Jacobian, describing the local change from 3D position to screen position |
+| $\Sigma_{2D}$ | Covariance that determines the projected ellipse's size and orientation |
+
+The Gaussian footprint gives pixels near the projected center $\mu$ more weight:
 
 $$
 G(x)=\exp\!\left(-\tfrac12(x-\mu)^T\Sigma_{2D}^{-1}(x-\mu)\right).
 $$
 
-The renderer draws instanced quads, evaluates view-dependent SH color, and alpha-composites depth-sorted splats. Gaussian attributes remain GPU-resident; parallel CPU depth evaluation and radix sorting update an index buffer as the view changes. GPU-assisted reordering is experimental and disabled by default.
+Here, $x$ is a screen-space pixel position. The renderer draws the ellipse using an instanced quad, evaluates SH color for the viewing direction, and alpha-composites depth-sorted splats.
 
-### Coordinate systems and alignment
+**Data handling:** Gaussian attributes stay GPU-resident. As the view changes, parallel CPU depth evaluation and radix sorting update the drawing-order index buffer. Experimental GPU-assisted reordering is disabled by default.
 
-The LiDAR trajectory supplies the metric world frame. With $T_{AB}$ mapping coordinates from frame B to frame A, camera initialization uses:
+### 7. Coordinate systems and scene alignment
+
+**Goal:** keep camera poses, scene geometry, objects, and routes in consistent coordinates.
+
+The LiDAR trajectory defines the metric world frame. Using $T_{AB}$ to map coordinates from frame B into frame A, camera initialization is:
 
 $$
 T_{WC}=T_{WL}T_{LC}.
 $$
 
-Bundle adjustment refines camera poses in this frame. Downstream geometry must use the same frame and calibration for meaningful comparison.
+$T_{WL}$ is the LiDAR pose in the world, and $T_{LC}$ maps camera coordinates into the LiDAR frame. Their composition gives the camera pose in the world. Bundle adjustment refines that pose in the same frame.
 
-For navigation, the app estimates a scene-dependent vertical direction from principal components and rotates it toward +Z. A floor estimate from aligned scene geometry supports navigation height. Scene alignment and display normalization are applied consistently to objects, routes, the robot, and the minimap; saved paths are converted back to the original `3dgs_world` frame. Current Gaussian and LiDAR maps may still be only approximately registered.
+For navigation, the app applies these steps:
 
-### Route planning and playback
+1. **Estimate vertical:** use principal components of the scene geometry to choose a candidate vertical direction, then rotate it toward +Z.
+2. **Estimate floor height:** use the aligned geometry to establish a navigation height reference.
+3. **Transform consistently:** apply scene alignment and display normalization to semantic objects, routes, the robot, and the minimap.
+4. **Save in world coordinates:** convert saved paths back into the original `3dgs_world` frame.
 
-A* operates on an 8-connected, obstacle-filtered walkable grid. The planner selects reachable stopping cells near a confirmed semantic target, prevents diagonal corner cutting, and applies clearance constraints.
+Downstream assets must share a compatible frame and calibration. The current Gaussian and LiDAR maps may still be only approximately registered.
 
-Playback interpolates by traveled distance, estimates heading using a look-ahead point, and smooths rotation. The simulated pose drives the camera and minimap. Pausing allows free inspection; resuming restores the route viewpoint.
+### 8. Route planning and playback
+
+**Goal:** reach a confirmed semantic target and simulate the camera's motion along the route.
+
+- **Choose a destination:** select a reachable stopping cell near the target object.
+- **Plan a path:** run A* on an 8-connected walkable grid, allowing horizontal, vertical, and diagonal moves. Obstacle filtering, clearance constraints, and diagonal corner-cutting prevention restrict the search.
+- **Follow the route:** interpolate position by traveled distance, estimate heading from a look-ahead point, and smooth rotation.
+- **Update the view:** synchronize the simulated pose with the camera and minimap. Pausing allows free inspection; resuming restores the route viewpoint.
 
 ## Dependencies
 
