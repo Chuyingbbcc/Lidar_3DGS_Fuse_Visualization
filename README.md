@@ -12,37 +12,37 @@ Explore a reconstructed room, inspect semantic objects, plan a route to a named 
 
 Enter an object name or description to select a navigation destination, such as `go to the white mug`.
 
-<img src="demo_video/converted_gifs/search_bar_1.gif" alt="Semantic navigation request entered in the Qt application" width="360">
+<img src="demo_video/converted_gifs/search_bar_1.gif" alt="Semantic navigation request entered in the Qt application" width="440">
 
 ### Plan a route through the scene
 
 Define exploration paths in the reconstructed world and inspect them from above. The green control points show the editable route; the minimap provides scene context.
 
-<img src="docs/images/navigation-path.png" alt="Top-down Gaussian scene with an editable green navigation path" width="360">
+<img src="docs/images/navigation-path.png" alt="Top-down Gaussian scene with an editable green navigation path" width="440">
 
 ### Follow the robot's viewpoint
 
 Play, pause, resume, or stop an exploration route. Camera position and heading update along the path, with the robot pose shown on the minimap.
 
-<img src="demo_video/converted_gifs/navigation_35s_to_43s.gif" alt="Camera viewpoint changing during route playback" width="360">
+<img src="demo_video/converted_gifs/navigation_35s_to_43s.gif" alt="Camera viewpoint changing during route playback" width="440">
 
 ### Navigate to an object
 
 Select a confirmed semantic target and follow the planned route toward it. This example approaches a microwave.
 
-<img src="demo_video/converted_gifs/navigate_to_micro_58s_to_1m09s.gif" alt="Navigation toward a microwave in the reconstructed scene" width="360">
+<img src="demo_video/converted_gifs/navigate_to_micro_58s_to_1m09s.gif" alt="Navigation toward a microwave in the reconstructed scene" width="440">
 
 ### Inspect semantic objects
 
 Object names, IDs, and approximate projected bounding boxes move with the view. Click a box to select an object and inspect its description.
 
-<img src="docs/images/semantic-object-map.png" alt="Semantic labels and approximate bounding boxes over the reconstructed room" width="360">
+<img src="docs/images/semantic-object-map.png" alt="Semantic labels and approximate bounding boxes over the reconstructed room" width="440">
 
 ### Compare with colored LiDAR
 
 The colored point cloud exposes the measured scene structure. Switching representations preserves the viewpoint for visual comparison.
 
-<img src="docs/images/colored-lidar.png" alt="Colored LiDAR scene with route and robot pose on the minimap" width="360">
+<img src="docs/images/colored-lidar.png" alt="Colored LiDAR scene with route and robot pose on the minimap" width="440">
 
 ### Demo videos
 
