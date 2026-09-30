@@ -44,7 +44,12 @@ The colored point cloud exposes the measured scene structure. Switching represen
 
 <img src="docs/images/colored-lidar.png" alt="Colored LiDAR scene with route and robot pose on the minimap" width="360">
 
-[View or download the exploration video](demo_video/explore_demo.mp4).
+### Demo videos
+
+| exploration | navigation |
+|:---:|:---:|
+| <a href="https://youtu.be/1UWj5hDzwCo"><img src="https://img.youtube.com/vi/1UWj5hDzwCo/hqdefault.jpg" alt="Exploration video" width="240"></a> | <a href="https://youtu.be/s6WtcD9oFgs"><img src="https://img.youtube.com/vi/s6WtcD9oFgs/hqdefault.jpg" alt="Navigation video" width="240"></a> |
+| [exploration](https://youtu.be/1UWj5hDzwCo) | [navigation](https://youtu.be/s6WtcD9oFgs) |
 
 ## Key features
 
